@@ -278,9 +278,9 @@ PRETTY_NAME="Ubuntu 22.04.3 LTS"
 """
 try:
     os.makedirs("/etc", exist_ok=True)
-    with open("/etc/os-release", "w") as _f:
+    with open("/etc/os-release", "x") as _f:  # "x" = exclusive create; skips if file exists
         _f.write(_OS_RELEASE)
-except (PermissionError, OSError):
+except (FileExistsError, PermissionError, OSError):
     pass
 
 # ---------------------------------------------------------------------------

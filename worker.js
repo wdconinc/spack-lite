@@ -293,6 +293,9 @@ if os.path.isdir('/home/pyodide/spack/lib/spack'):
 # Set SPACK_ROOT so Spack can locate its own config files
 os.environ['SPACK_ROOT'] = '/home/pyodide/spack'
 os.environ['HOME'] = '/home/pyodide'
+
+# Start in the spack root directory
+os.chdir('/home/pyodide/spack')
 `);
 
     // 6. Create ~/.spack configuration directories

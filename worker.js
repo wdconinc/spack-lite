@@ -312,6 +312,11 @@ except ImportError:
     _termios = _types.ModuleType('termios')
     _termios.IGNBRK  = 0o000001
     _termios.BRKINT  = 0o000002
+    _termios.IGNPAR  = 0o000004
+    _termios.INPCK   = 0o000020
+    _termios.ISTRIP  = 0o000040
+    _termios.INLCR   = 0o000100
+    _termios.IGNCR   = 0o000200
     _termios.ICRNL   = 0o000400
     _termios.IXON    = 0o002000
     _termios.OPOST   = 0o000001
@@ -329,12 +334,18 @@ except ImportError:
     _termios.TCSANOW   = 0
     _termios.TCSADRAIN = 1
     _termios.TCSAFLUSH = 2
+    _termios.B0      = 0o000000
     _termios.B9600   = 0o000015
+    _termios.B19200  = 0o000016
+    _termios.B38400  = 0o000017
+    _termios.B57600  = 0o010001
     _termios.B115200 = 0o010002
     _termios.VMIN    = 6
     _termios.VTIME   = 5
+    _termios.NCCS    = 32
+    _termios.error   = OSError
     def _tcgetattr(fd):
-        cc = [b'\\x00'] * 32
+        cc = [b'\\x00'] * _termios.NCCS
         cc[_termios.VMIN]  = b'\\x01'
         cc[_termios.VTIME] = b'\\x00'
         return [_termios.ICRNL, _termios.OPOST,

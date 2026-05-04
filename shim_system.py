@@ -349,10 +349,16 @@ except ImportError:
     _termios.VMIN  = 6
     _termios.VTIME = 5
 
+    # Number of control characters in the cc array (matches Linux/glibc NCCS)
+    _termios.NCCS = 32
+
+    # Exception type — mirrors termios.error in the real module
+    _termios.error = OSError
+
     # tcgetattr returns a list: [iflag, oflag, cflag, lflag, ispeed, ospeed, cc]
     # Return a reasonable "dumb terminal" attribute list.
     def _tcgetattr(fd):
-        cc = [b'\x00'] * 32
+        cc = [b'\x00'] * _termios.NCCS
         cc[_termios.VMIN]  = b'\x01'
         cc[_termios.VTIME] = b'\x00'
         return [

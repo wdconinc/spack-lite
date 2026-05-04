@@ -38,6 +38,7 @@ jobs:
           cp index.html    _site/
           cp worker.js     _site/
           cp shim_system.py _site/
+          cp shell.py      _site/
           cp spack-lite.tar.gz _site/
 
       - name: Upload Pages artefact

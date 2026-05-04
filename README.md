@@ -106,7 +106,7 @@ spack-lite:~$ spack list
 spack-lite:~$ spack info zlib
 spack-lite:~$ spack spec zlib+shared
 spack-lite:~$ ls /home/pyodide/spack/lib/spack | head -20
-spack-lite:~$ cat /home/pyodide/spack/var/spack/repos/builtin/packages/zlib/package.py
+spack-lite:~$ cat /home/pyodide/spack/var/spack/repos/spack_repo/builtin/packages/zlib/package.py
 spack-lite:~$ help
 spack-lite:~$ clear
 ```
@@ -124,7 +124,8 @@ spack-lite/
 ├── spack_config/
 │   ├── compilers.yaml      ← Fake GCC 11 compiler definition
 │   ├── packages.yaml       ← Provider preferences (openmpi, openblas …)
-│   └── config.yaml         ← Core Spack config (concretizer, no checksum …)
+│   ├── config.yaml         ← Core Spack config (concretizer, no checksum …)
+│   └── repos.yaml          ← Override builtin repo to local path (no git needed)
 ├── scripts/
 │   └── make_spack_lite.sh  ← Builds spack-lite.tar.gz
 └── README.md

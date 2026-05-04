@@ -90,6 +90,15 @@ packages:
       lapack: [openblas]
 `;
 
+// Override the default repos.yaml (which points to a remote git URL) with
+// a local path inside the unpacked spack-lite archive.  This prevents spack
+// from trying to clone packages from GitHub, which requires git and a live
+// network connection — neither of which works in a browser WASM environment.
+const REPOS_YAML = `\
+repos:
+  builtin: $spack/var/spack/repos/spack_repo/builtin
+`;
+
 const CONFIG_YAML = `\
 config:
   concretizer: clingo
@@ -312,6 +321,7 @@ cfg_files = {
     '/home/pyodide/.spack/config.yaml':        ${JSON.stringify(CONFIG_YAML)},
     '/home/pyodide/.spack/linux/compilers.yaml': ${JSON.stringify(COMPILERS_YAML)},
     '/home/pyodide/.spack/packages.yaml':       ${JSON.stringify(PACKAGES_YAML)},
+    '/home/pyodide/.spack/repos.yaml':          ${JSON.stringify(REPOS_YAML)},
 }
 for path, content in cfg_files.items():
     with open(path, 'w') as f:

@@ -132,6 +132,7 @@ def _build_mock_result(args=None, **kwargs):
 
     stdout = b""
     stderr = b""
+    exit_code = 0  # only overridden in the git branch below
 
     if "uname" in cmd:
         stdout = b"x86_64\n"
@@ -150,17 +151,21 @@ def _build_mock_result(args=None, **kwargs):
         # unreachable) so that read-only spack commands still work.
         git_args = list(args) if isinstance(args, (list, tuple)) else __import__("shlex").split(str(args or ""))
         # Strip the 'git' executable name — wasm-git's callMain is git itself.
-        if git_args and git_args[0] == "git":
+        # The fake stub is installed at /usr/bin/git, so argv[0] may be a
+        # full path; compare by basename to handle both 'git' and '/usr/bin/git'.
+        if git_args and os.path.basename(git_args[0]) == "git":
             git_args = git_args[1:]
-        _wasm_stdout = None
+        _wasm_result = None
         try:
             import js as _js
             if hasattr(_js, "gitCall"):
-                _wasm_stdout = _js.gitCall(_json.dumps(git_args))
+                _wasm_result = _json.loads(_js.gitCall(_json.dumps(git_args)))
         except Exception:
             pass
-        if _wasm_stdout is not None:
-            stdout = (_wasm_stdout or "").encode()
+        if _wasm_result is not None:
+            stdout    = (_wasm_result.get("stdout") or "").encode()
+            stderr    = (_wasm_result.get("stderr") or "").encode()
+            exit_code = int(_wasm_result.get("returncode") or 0)
         elif "rev-parse" in cmd or "log" in cmd:
             stdout = b"abc1234\n"
         else:
@@ -192,7 +197,7 @@ def _build_mock_result(args=None, **kwargs):
     result = MagicMock()
     result.stdout = stdout
     result.stderr = stderr
-    result.returncode = 0
+    result.returncode = exit_code
     result.args = args
     return result
 

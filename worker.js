@@ -167,9 +167,10 @@ async function init() {
       // on globalThis BEFORE the module is imported so that the Emscripten
       // runtime picks them up during initialisation).
       let _gitOutputLines = [];
+      let _gitErrLines    = [];
       globalThis.wasmGitModuleOverrides = {
         print:    (line) => { _gitOutputLines.push(line); },
-        printErr: (line) => { console.warn('[wasm-git stderr]', line); },
+        printErr: (line) => { _gitErrLines.push(line); },
       };
 
       const lg2mod = await import(WASM_GIT_URL);
@@ -184,7 +185,7 @@ async function init() {
       );
 
       /**
-       * Execute a git command via wasm-git and return captured stdout.
+       * Execute a git command via wasm-git and return a JSON result object.
        *
        * Called synchronously from Python through Pyodide's `js` module:
        *   js.gitCall(json.dumps(['clone', url, dest]))
@@ -193,7 +194,7 @@ async function init() {
        * MEMFS into Pyodide's MEMFS so that Python can see the files.
        *
        * @param  {string} argsJson  JSON array of git argv (without 'git').
-       * @return {string}           Captured stdout (may be empty string).
+       * @return {string}           JSON string: {stdout, stderr, returncode}.
        */
       self.gitCall = function gitCall(argsJson) {
         const args = JSON.parse(argsJson);
@@ -210,13 +211,26 @@ async function init() {
         // wasm-git's FS before git tries to create the repo directory.
         if (parentDir) _mkdirp(lg.FS, parentDir);
 
-        _gitOutputLines = []; // reset capture buffer for this call
+        _gitOutputLines = []; // reset capture buffers for this call
+        _gitErrLines    = [];
+        let returncode = 0;
         try {
           lg.callMain(args);
         } catch (e) {
-          // Emscripten's callMain may throw on process exit — this is normal.
+          // Emscripten calls exit() when git finishes; this surfaces as an
+          // ExitStatus object with a numeric .status field.  Any non-zero
+          // status means git itself reported a failure.
+          if (e && typeof e.status === 'number') {
+            returncode = e.status;
+          } else if (e) {
+            // Unexpected JS error — treat as a generic failure.
+            returncode = 1;
+            _gitErrLines.push(e.message || String(e));
+            if (e.stack) _gitErrLines.push(e.stack);
+          }
         }
-        const out = _gitOutputLines.join('\n') + (_gitOutputLines.length ? '\n' : '');
+        const stdout = _gitOutputLines.join('\n') + (_gitOutputLines.length ? '\n' : '');
+        const stderr = _gitErrLines.join('\n')    + (_gitErrLines.length    ? '\n' : '');
 
         // After clone, bridge the cloned tree from wasm-git's MEMFS into
         // Pyodide's MEMFS so Python / spack can read the files.
@@ -235,7 +249,7 @@ async function init() {
           }
         }
 
-        return out;
+        return JSON.stringify({ stdout, stderr, returncode });
       };
     } catch (gitErr) {
       console.warn('wasm-git unavailable — git operations will use mock responses:', gitErr);

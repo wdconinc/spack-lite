@@ -81,6 +81,13 @@ if "SPACK_USER_CONFIG_PATH" not in os.environ:
 # ---------------------------------------------------------------------------
 # Apply system shims
 # (monkey-patches subprocess, os, platform, grp, pwd, termios, tty, …)
+#
+# shim_system.py is exec'd rather than imported as a module because it is
+# designed to run as a script that modifies the *current* process's module
+# globals (e.g. ``subprocess.run = _mock_run``).  A normal import would
+# isolate those assignments inside the shim module's own namespace, leaving
+# the calling module's ``subprocess`` reference untouched.  The exec approach
+# is the documented usage pattern described in shim_system.py's own docstring.
 # ---------------------------------------------------------------------------
 _SHIM_PATH = os.path.join(_REPO_ROOT, "shim_system.py")
 with open(_SHIM_PATH) as _fh:
@@ -89,6 +96,11 @@ with open(_SHIM_PATH) as _fh:
 # ---------------------------------------------------------------------------
 # Load the Python-backed shell
 # (defines run_shell_command at module global scope via exec)
+#
+# shell.py is exec'd so that run_shell_command() is deposited directly into
+# this module's global namespace where the __main__ block can reference it
+# without an attribute lookup on an intermediate module object.  The same
+# pattern is used by worker.js (runPythonAsync) in the browser environment.
 # ---------------------------------------------------------------------------
 _SHELL_PATH = os.path.join(_REPO_ROOT, "shell.py")
 with open(_SHELL_PATH) as _fh:

@@ -78,7 +78,7 @@ class TestSpackUnitTestCollect:
     """Verify that test collection works for a known pure-Python test file."""
 
     def test_collect_version_tests(self, spack_root):
-        """``spack unit-test --collect-only`` on test_version.py finds tests."""
+        """``spack unit-test --collect-only`` on versions.py finds tests."""
         if not _spack_test_file_present(spack_root, _VERSION_TEST):
             pytest.skip(f"{_VERSION_TEST} not present in {spack_root!r}")
 

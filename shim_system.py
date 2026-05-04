@@ -798,8 +798,8 @@ except ImportError:
 
     _mp_stub.sem_unlink = _sem_unlink
 
-    # SemLock kinds (mirror CPython constants from multiprocessing/synchronize.py:
-    # RECURSIVE_MUTEX, SEMAPHORE = list(range(2)))
+    # SemLock kinds (mirror CPython constants from CPython's
+    # Lib/multiprocessing/synchronize.py: RECURSIVE_MUTEX, SEMAPHORE = list(range(2)))
     _SEM_LOCK_RECURSIVE_MUTEX = 0
     _SEM_LOCK_SEMAPHORE = 1
 

@@ -133,7 +133,7 @@ class TestMultiprocessingPrimitives:
         assert r.stdout.strip() == "ok"
 
     def test_semaphore_non_blocking(self):
-        """Semaphore.acquire(block=False) must not raise when the lock is held."""
+        """Semaphore.acquire(block=False) returns True when the semaphore is available."""
         r = _run_shim_script(
             "import multiprocessing\n"
             "sem = multiprocessing.Semaphore(1)\n"

@@ -1,0 +1,582 @@
+"""
+shell.py — Python-backed POSIX-like shell for Spack-Lite
+
+Provides a single public entry-point:
+
+    result_json = run_shell_command(line)   # returns a JSON string
+
+The JSON object contains:
+    {
+        "output": "<stdout of the pipeline>",
+        "cwd":    "<display-form of the current working directory>"
+    }
+
+Supported built-ins
+-------------------
+  echo, pwd, cd, ls, cat, head, tail, grep,
+  mkdir, rm, cp, mv, env, which, find, spack
+
+Pipeline (|) support
+--------------------
+Commands are chained by splitting on unquoted pipe characters.  Each
+stage's stdout becomes the next stage's stdin.
+
+Variable expansion
+------------------
+$VAR and ${VAR} are expanded from os.environ before each token is
+passed to the handler.
+
+This file is served alongside index.html / worker.js.  worker.js
+fetches it over HTTP and executes it with pyodide.runPythonAsync().
+"""
+
+import fnmatch
+import io
+import json
+import os
+import shlex
+import shutil
+import sys
+
+# ---------------------------------------------------------------------------
+# Internal StringIO subclass that satisfies Spack's TTY-detection calls
+# ---------------------------------------------------------------------------
+
+class _ShellBuffer(io.StringIO):
+    """StringIO that provides fileno()/isatty() so Spack's TTY-detection code
+    does not raise io.UnsupportedOperation and abort the command."""
+
+    def fileno(self):
+        return 1  # pretend to be stdout; os.isatty(1) is False in Pyodide
+
+    def isatty(self):
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _display_cwd():
+    """Return the current directory, abbreviating $HOME as '~'."""
+    cwd = os.getcwd()
+    home = os.environ.get('HOME', '/home/pyodide')
+    if cwd == home:
+        return '~'
+    if cwd.startswith(home + '/'):
+        return '~' + cwd[len(home):]
+    return cwd
+
+
+def _split_pipeline(line):
+    """Split *line* on unquoted '|' characters into stage strings."""
+    stages = []
+    current = []
+    in_single = False
+    in_double = False
+    for ch in line:
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            current.append(ch)
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+            current.append(ch)
+        elif ch == '|' and not in_single and not in_double:
+            stages.append(''.join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    stages.append(''.join(current).strip())
+    return [s for s in stages if s]
+
+
+def _expand_vars(token):
+    """Expand $VAR and ${VAR} references in *token* from os.environ."""
+    import re
+    def _replace(m):
+        name = m.group(1) or m.group(2)
+        return os.environ.get(name, '')
+    return re.sub(r'\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)', _replace, token)
+
+
+# ---------------------------------------------------------------------------
+# Built-in command implementations
+# Each handler receives (args: list[str], stdin: str) and returns str.
+# ---------------------------------------------------------------------------
+
+def _cmd_echo(args, stdin):
+    return ' '.join(args) + '\n'
+
+
+def _cmd_pwd(args, stdin):
+    return os.getcwd() + '\n'
+
+
+def _cmd_cd(args, stdin):
+    target = args[0] if args else os.environ.get('HOME', '/home/pyodide')
+    # Support '~' and '~/...' shorthand
+    home = os.environ.get('HOME', '/home/pyodide')
+    if target == '~':
+        target = home
+    elif target.startswith('~/'):
+        target = home + target[1:]
+    try:
+        os.chdir(target)
+    except FileNotFoundError:
+        return f'cd: {target}: No such file or directory\n'
+    except NotADirectoryError:
+        return f'cd: {target}: Not a directory\n'
+    return ''
+
+
+def _cmd_ls(args, stdin):
+    show_all = False
+    long_fmt = False
+    paths = []
+    for a in args:
+        if a.startswith('-'):
+            if 'a' in a:
+                show_all = True
+            if 'l' in a:
+                long_fmt = True
+        else:
+            paths.append(a)
+    if not paths:
+        paths = [os.getcwd()]
+
+    out = []
+    for path in paths:
+        try:
+            entries = sorted(os.listdir(path))
+            if not show_all:
+                entries = [e for e in entries if not e.startswith('.')]
+            for e in entries:
+                full = os.path.join(path, e)
+                is_dir = os.path.isdir(full)
+                if long_fmt:
+                    try:
+                        size = os.stat(full).st_size
+                    except OSError:
+                        size = 0
+                    mode = 'd' if is_dir else '-'
+                    out.append(f'{mode}rwxr-xr-x  {size:>10d}  {e}{"/" if is_dir else ""}')
+                else:
+                    out.append(e + ('/' if is_dir else ''))
+        except FileNotFoundError:
+            out.append(f"ls: cannot access '{path}': No such file or directory")
+        except NotADirectoryError:
+            out.append(os.path.basename(path))
+    return '\n'.join(out) + '\n' if out else ''
+
+
+def _cmd_cat(args, stdin):
+    if not args:
+        return stdin
+    out = []
+    for f in args:
+        try:
+            with open(f) as fh:
+                out.append(fh.read())
+        except FileNotFoundError:
+            out.append(f'cat: {f}: No such file or directory\n')
+        except IsADirectoryError:
+            out.append(f'cat: {f}: Is a directory\n')
+    return ''.join(out)
+
+
+def _cmd_head(args, stdin):
+    n = 10
+    files = []
+    i = 0
+    while i < len(args):
+        if args[i] in ('-n', '--lines') and i + 1 < len(args):
+            try:
+                n = int(args[i + 1])
+            except ValueError:
+                pass
+            i += 2
+        elif args[i].startswith('-') and args[i][1:].isdigit():
+            n = int(args[i][1:])
+            i += 1
+        else:
+            files.append(args[i])
+            i += 1
+    if not files:
+        lines = stdin.splitlines(keepends=True)
+        return ''.join(lines[:n])
+    out = []
+    for f in files:
+        try:
+            with open(f) as fh:
+                out.append(''.join(fh.readlines()[:n]))
+        except FileNotFoundError:
+            out.append(f'head: {f}: No such file or directory\n')
+    return ''.join(out)
+
+
+def _cmd_tail(args, stdin):
+    n = 10
+    files = []
+    i = 0
+    while i < len(args):
+        if args[i] in ('-n', '--lines') and i + 1 < len(args):
+            try:
+                n = int(args[i + 1])
+            except ValueError:
+                pass
+            i += 2
+        elif args[i].startswith('-') and args[i][1:].isdigit():
+            n = int(args[i][1:])
+            i += 1
+        else:
+            files.append(args[i])
+            i += 1
+    if not files:
+        lines = stdin.splitlines(keepends=True)
+        return ''.join(lines[-n:])
+    out = []
+    for f in files:
+        try:
+            with open(f) as fh:
+                out.append(''.join(fh.readlines()[-n:]))
+        except FileNotFoundError:
+            out.append(f'tail: {f}: No such file or directory\n')
+    return ''.join(out)
+
+
+def _cmd_grep(args, stdin):
+    import re as _re
+    case_insensitive = False
+    invert = False
+    show_line_numbers = False
+    pattern = None
+    files = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ('-i', '--ignore-case'):
+            case_insensitive = True
+            i += 1
+        elif a in ('-v', '--invert-match'):
+            invert = True
+            i += 1
+        elif a in ('-n', '--line-number'):
+            show_line_numbers = True
+            i += 1
+        elif a.startswith('-'):
+            i += 1  # skip unrecognised flags
+        elif pattern is None:
+            pattern = a
+            i += 1
+        else:
+            files.append(a)
+            i += 1
+    if pattern is None:
+        return 'grep: missing pattern\n'
+    flags = _re.MULTILINE | (_re.IGNORECASE if case_insensitive else 0)
+    try:
+        regex = _re.compile(pattern, flags)
+    except _re.error as exc:
+        return f'grep: invalid regex: {exc}\n'
+
+    def _match_lines(text, source=None):
+        matched = []
+        for lineno, line in enumerate(text.splitlines(), 1):
+            hit = bool(regex.search(line))
+            if invert:
+                hit = not hit
+            if hit:
+                parts = []
+                if source:
+                    parts.append(source + ':')
+                if show_line_numbers:
+                    parts.append(str(lineno) + ':')
+                parts.append(line)
+                matched.append(''.join(parts))
+        return '\n'.join(matched) + '\n' if matched else ''
+
+    if not files:
+        return _match_lines(stdin)
+    out = []
+    show_filename = len(files) > 1
+    for f in files:
+        try:
+            with open(f) as fh:
+                out.append(_match_lines(fh.read(), f if show_filename else None))
+        except FileNotFoundError:
+            out.append(f'grep: {f}: No such file or directory\n')
+    return ''.join(out)
+
+
+def _cmd_mkdir(args, stdin):
+    if not args:
+        return 'mkdir: missing operand\n'
+    make_parents = False
+    paths = []
+    for a in args:
+        if a in ('-p', '--parents'):
+            make_parents = True
+        elif not a.startswith('-'):
+            paths.append(a)
+    out = []
+    for p in paths:
+        try:
+            if make_parents:
+                os.makedirs(p, exist_ok=True)
+            else:
+                os.mkdir(p)
+        except FileExistsError:
+            if not make_parents:
+                out.append(f"mkdir: cannot create directory '{p}': File exists\n")
+        except FileNotFoundError:
+            out.append(f"mkdir: cannot create directory '{p}': No such file or directory\n")
+        except OSError as exc:
+            out.append(f"mkdir: {p}: {exc.strerror}\n")
+    return ''.join(out)
+
+
+def _cmd_rm(args, stdin):
+    if not args:
+        return 'rm: missing operand\n'
+    recursive = False
+    force = False
+    paths = []
+    for a in args:
+        if a.startswith('-'):
+            if 'r' in a or 'R' in a:
+                recursive = True
+            if 'f' in a:
+                force = True
+        else:
+            paths.append(a)
+    out = []
+    for p in paths:
+        try:
+            if os.path.isdir(p):
+                if recursive:
+                    shutil.rmtree(p)
+                else:
+                    out.append(f"rm: cannot remove '{p}': Is a directory\n")
+            else:
+                os.remove(p)
+        except FileNotFoundError:
+            if not force:
+                out.append(f"rm: cannot remove '{p}': No such file or directory\n")
+        except OSError as exc:
+            out.append(f"rm: {p}: {exc.strerror}\n")
+    return ''.join(out)
+
+
+def _cmd_cp(args, stdin):
+    recursive = False
+    files = []
+    for a in args:
+        if a.startswith('-'):
+            if 'r' in a or 'R' in a:
+                recursive = True
+        else:
+            files.append(a)
+    if len(files) < 2:
+        return 'cp: missing destination file operand\n'
+    src_list, dst = files[:-1], files[-1]
+    out = []
+    for src in src_list:
+        try:
+            if os.path.isdir(src):
+                if not recursive:
+                    out.append(f"cp: -r not specified; omitting directory '{src}'\n")
+                    continue
+                dest = os.path.join(dst, os.path.basename(src)) if os.path.isdir(dst) else dst
+                shutil.copytree(src, dest)
+            else:
+                dest = os.path.join(dst, os.path.basename(src)) if os.path.isdir(dst) else dst
+                shutil.copy2(src, dest)
+        except FileNotFoundError:
+            out.append(f"cp: '{src}': No such file or directory\n")
+        except OSError as exc:
+            out.append(f"cp: {exc.strerror}\n")
+    return ''.join(out)
+
+
+def _cmd_mv(args, stdin):
+    files = [a for a in args if not a.startswith('-')]
+    if len(files) < 2:
+        return 'mv: missing destination file operand\n'
+    src_list, dst = files[:-1], files[-1]
+    out = []
+    for src in src_list:
+        try:
+            dest = os.path.join(dst, os.path.basename(src)) if os.path.isdir(dst) else dst
+            shutil.move(src, dest)
+        except FileNotFoundError:
+            out.append(f"mv: '{src}': No such file or directory\n")
+        except OSError as exc:
+            out.append(f"mv: {exc.strerror}\n")
+    return ''.join(out)
+
+
+def _cmd_env(args, stdin):
+    if args:
+        return f"env: extra arguments are not supported in this shell\n"
+    return ''.join(f'{k}={v}\n' for k, v in sorted(os.environ.items()))
+
+
+def _cmd_which(args, stdin):
+    if not args:
+        return 'which: missing argument\n'
+    path_dirs = os.environ.get('PATH', '/usr/bin:/bin').split(':')
+    out = []
+    for name in args:
+        found = False
+        for d in path_dirs:
+            candidate = os.path.join(d, name)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                out.append(candidate + '\n')
+                found = True
+                break
+        if not found:
+            out.append(f'{name} not found\n')
+    return ''.join(out)
+
+
+def _cmd_find(args, stdin):
+    root = '.'
+    name_pattern = None
+    type_filter = None
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == '-name' and i + 1 < len(args):
+            name_pattern = args[i + 1]
+            i += 2
+        elif a == '-type' and i + 1 < len(args):
+            type_filter = args[i + 1]
+            i += 2
+        elif not a.startswith('-'):
+            root = a
+            i += 1
+        else:
+            i += 1  # skip unrecognised options
+    out = []
+    try:
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames.sort()
+            for entry in sorted(dirnames) + sorted(filenames):
+                full = os.path.join(dirpath, entry)
+                is_dir = entry in dirnames
+                # Apply -type filter
+                if type_filter == 'f' and is_dir:
+                    continue
+                if type_filter == 'd' and not is_dir:
+                    continue
+                # Apply -name filter
+                if name_pattern is not None and not fnmatch.fnmatch(entry, name_pattern):
+                    continue
+                # Normalise path (remove leading ./)
+                display = full if not full.startswith('./') else full[2:]
+                out.append(display)
+    except (FileNotFoundError, NotADirectoryError):
+        return f"find: '{root}': No such file or directory\n"
+    return '\n'.join(out) + '\n' if out else ''
+
+
+def _cmd_spack(args, stdin):
+    """Route spack sub-commands through the Spack Python API."""
+    try:
+        from spack.main import SpackCommand, SpackCommandError  # noqa: F401
+    except ImportError:
+        return (
+            "spack: not available — build spack-lite.tar.gz with\n"
+            "  scripts/make_spack_lite.sh  and serve it alongside index.html\n"
+        )
+
+    if not args:
+        return "Usage: spack <command> [options]\nTry 'spack help' for available commands.\n"
+
+    buf = _ShellBuffer()
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    try:
+        sys.stdout = buf
+        sys.stderr = buf
+        try:
+            cmd = SpackCommand(args[0])
+            cmd(*args[1:])
+        except SystemExit:
+            pass
+        except SpackCommandError as exc:
+            buf.write(f'\nError: {exc}\n')
+        except Exception as exc:  # noqa: BLE001
+            buf.write(f'\nError: {exc}\n')
+    finally:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Dispatch table
+# ---------------------------------------------------------------------------
+
+_BUILTINS = {
+    'echo':  _cmd_echo,
+    'pwd':   _cmd_pwd,
+    'cd':    _cmd_cd,
+    'ls':    _cmd_ls,
+    'cat':   _cmd_cat,
+    'head':  _cmd_head,
+    'tail':  _cmd_tail,
+    'grep':  _cmd_grep,
+    'mkdir': _cmd_mkdir,
+    'rm':    _cmd_rm,
+    'cp':    _cmd_cp,
+    'mv':    _cmd_mv,
+    'env':   _cmd_env,
+    'which': _cmd_which,
+    'find':  _cmd_find,
+    'spack': _cmd_spack,
+}
+
+
+# ---------------------------------------------------------------------------
+# Public entry-point
+# ---------------------------------------------------------------------------
+
+def run_shell_command(line):
+    """Parse and execute a shell pipeline.
+
+    Returns a JSON string:
+        {"output": "<stdout>", "cwd": "<display-cwd>"}
+    """
+    line = line.strip()
+    if not line:
+        return json.dumps({'output': '', 'cwd': _display_cwd()})
+
+    stages = _split_pipeline(line)
+    stdin_text = ''
+
+    for stage in stages:
+        stage = stage.strip()
+        if not stage:
+            continue
+        try:
+            try:
+                argv = [_expand_vars(tok) for tok in shlex.split(stage)]
+            except ValueError as exc:
+                stdin_text = f'shell: parse error: {exc}\n'
+                break
+
+            if not argv:
+                continue
+
+            cmd_name = argv[0]
+            cmd_args = argv[1:]
+            handler = _BUILTINS.get(cmd_name)
+            if handler is None:
+                stdin_text = f'{cmd_name}: command not found\n'
+            else:
+                stdin_text = handler(cmd_args, stdin_text) or ''
+        except Exception as exc:  # noqa: BLE001
+            stdin_text = f'Error in {stage!r}: {exc}\n'
+
+    return json.dumps({'output': stdin_text, 'cwd': _display_cwd()})

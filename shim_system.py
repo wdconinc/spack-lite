@@ -434,3 +434,4 @@ except ImportError:
     _fcntl.ioctl = _ioctl_stub
 
     sys.modules["fcntl"] = _fcntl
+

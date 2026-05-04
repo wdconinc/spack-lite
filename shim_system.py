@@ -19,16 +19,25 @@ Modules patched
 9.  fcntl           — file-locking no-ops; fcntl/ioctl raise ENOSYS/ENOTTY
 
 This file is the **single canonical source** for all Pyodide compatibility
-shims.  worker.js fetches and executes it at start-up; there is no separate
-inline fallback.
+shims.  worker.js fetches it over HTTP and executes it at start-up; there
+is no separate inline fallback.
 
-Load this module *before* importing any Spack code:
+Usage
+-----
+In the Web Worker (worker.js, the normal path):
 
-    exec(open('shim_system.py').read())
+    const resp = await fetch('shim_system.py');
+    if (!resp.ok) throw new Error(`Failed to fetch shim_system.py (HTTP ${resp.status})`);
+    await pyodide.runPythonAsync(await resp.text());
 
-or, in a Pyodide worker:
+The file must be served from the same origin as index.html / worker.js.
+It is **not** written into the Pyodide MEMFS, so ``open('shim_system.py')``
+will not work inside Python — always pass the source text directly to
+``runPythonAsync``.
 
-    pyodide.runPythonAsync(open('shim_system.py').read())
+For local testing outside Pyodide (standard CPython):
+
+    exec(compile(open('/path/to/shim_system.py').read(), 'shim_system.py', 'exec'))
 """
 
 import sys

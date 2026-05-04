@@ -166,12 +166,30 @@ function disableInput() {
   inputEnabled = false;
 }
 
-term.onKey(({ key, domEvent }) => {
+// Prevent the browser from scrolling the page when the user presses the
+// up/down arrow keys to navigate command history.  xterm.js calls
+// preventDefault() on most handled keys, but doing it explicitly here via
+// attachCustomKeyEventHandler is more reliable across browsers.
+// Returning true lets xterm.js continue to process the event normally so
+// that the arrow-key escape sequences still flow through to onData.
+term.attachCustomKeyEventHandler((e) => {
+  if (e.type === 'keydown' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+    e.preventDefault();
+  }
+  return true;
+});
+
+// Use onData instead of onKey so that mobile virtual-keyboard input is
+// captured.  onKey fires from keydown DOM events, which mobile browsers
+// often dispatch with key='Unidentified' / keyCode=0, leaving inputBuffer
+// empty and making Enter appear to delete the typed command.  onData is
+// fed by xterm.js's CompositionHelper which monitors the textarea's input
+// event — the only reliable path on mobile — and also fires for every
+// desktop keypress, so this single handler covers both cases.
+term.onData((data) => {
   if (!inputEnabled) return;
 
-  const code = domEvent.keyCode;
-
-  if (code === 13) {                       // Enter
+  if (data === '\r' || data === '\n') {             // Enter
     const line = inputBuffer;
     inputBuffer  = '';
     historyIndex = -1;
@@ -183,14 +201,13 @@ term.onKey(({ key, domEvent }) => {
     }
     if (resolveInput) { resolveInput(line); resolveInput = null; }
 
-  } else if (code === 8) {                 // Backspace
+  } else if (data === '\x7f' || data === '\b') {    // Backspace / DEL
     if (inputBuffer.length > 0) {
       inputBuffer = inputBuffer.slice(0, -1);
       term.write('\b \b');
     }
 
-  } else if (code === 38) {               // ↑  — older history entry
-    domEvent.preventDefault();
+  } else if (data === '\x1b[A') {                   // ↑  — older history entry
     if (cmdHistory.length === 0) return;
     if (historyIndex === -1) savedInput = inputBuffer;
     historyIndex = Math.min(historyIndex + 1, cmdHistory.length - 1);
@@ -198,8 +215,7 @@ term.onKey(({ key, domEvent }) => {
     term.write('\r\x1b[K' + getPrompt() + entry);
     inputBuffer = entry;
 
-  } else if (code === 40) {               // ↓  — newer history entry / restore
-    domEvent.preventDefault();
+  } else if (data === '\x1b[B') {                   // ↓  — newer history entry / restore
     if (historyIndex === -1) return;
     historyIndex -= 1;
     const entry = historyIndex === -1 ? savedInput
@@ -207,9 +223,20 @@ term.onKey(({ key, domEvent }) => {
     term.write('\r\x1b[K' + getPrompt() + entry);
     inputBuffer = entry;
 
-  } else if (key >= ' ' && key.length === 1) {
-    inputBuffer += key;
-    term.write(key);
+  } else if (data.length > 0 && !data.startsWith('\x1b')) {
+    // Printable characters.  On desktop this is a single character; on mobile
+    // it may be several characters at once (paste, autocomplete insertion).
+    // Filter using numeric code points: keep >= 0x20 and explicitly exclude
+    // DEL (0x7f) so that string-comparison edge cases can't slip control
+    // characters into inputBuffer or the terminal display.
+    const printable = [...data].filter(ch => {
+      const cp = ch.codePointAt(0);
+      return cp >= 0x20 && cp !== 0x7f;
+    }).join('');
+    if (printable) {
+      inputBuffer += printable;
+      term.write(printable);
+    }
   }
 });
 

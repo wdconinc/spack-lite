@@ -13,15 +13,26 @@
 #   OUTPUT_TARBALL  Destination path for the produced archive.
 #                   Defaults to: spack-lite.tar.gz  (in the current directory)
 #
+# Environment variables:
+#   SPACK_VERSION           Branch/tag of spack/spack to clone. Default: develop
+#   PACKAGES_REPO           Path for the spack-packages clone. Default: /tmp/spack-packages-src
+#   SPACK_PACKAGES_VERSION  Branch/tag of spack/spack-packages. Default: main
+#
 # What this script does:
-#   1. Clone (or use an existing clone of) the Spack repository.
+#   1. Clone (or use an existing clone of) the Spack core repository.
+#   1b. Clone (or use an existing clone of) the spack-packages repository
+#       (packages were moved from spack/spack to spack/spack-packages in
+#       Spack's Package API v2.x).
 #   2. Remove large/unnecessary subtrees:
 #       - .git/           (version history, ~50 MB)
-#       - var/spack/repos/builtin/packages/*   (only keep the demo set below)
 #       - lib/spack/docs/ and lib/spack/test/
 #       - share/spack/docker/
-#   3. Inject the browser config files from spack_config/ into etc/spack/.
-#   4. Pack the result into a .tar.gz with the top-level directory "spack/".
+#   3. Copy the builtin package recipes from spack-packages into the tarball
+#      at var/spack/repos/spack_repo/builtin/ (the v2 API path structure).
+#   4. Inject the browser config files from spack_config/ into etc/spack/,
+#      including repos.yaml which overrides the default git remote URL with
+#      the local package path.
+#   5. Pack the result into a .tar.gz with the top-level directory "spack/".
 #
 # Demo packages kept (adjust KEEP_PKGS to change the set):
 #   autoconf automake bzip2 cmake curl diffutils expat findutils gdbm gettext
@@ -37,6 +48,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 SPACK_REPO="${1:-/tmp/spack-src}"
 OUTPUT_TARBALL="${2:-${REPO_ROOT}/spack-lite.tar.gz}"
+PACKAGES_REPO="${PACKAGES_REPO:-/tmp/spack-packages-src}"
 WORK_DIR="/tmp/spack-lite-build"
 SPACK_LITE_DIR="${WORK_DIR}/spack"
 
@@ -66,6 +78,20 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Step 1b: Ensure we have a spack-packages source tree (separate repo for
+#          package recipes since Spack's new package API v2.x split packages
+#          from the core)
+# ---------------------------------------------------------------------------
+SPACK_PACKAGES_VERSION="${SPACK_PACKAGES_VERSION:-main}"
+if [[ ! -d "${PACKAGES_REPO}/repos" ]]; then
+  log "Cloning spack-packages ${SPACK_PACKAGES_VERSION} into ${PACKAGES_REPO} …"
+  git clone --depth 1 --branch "${SPACK_PACKAGES_VERSION}" \
+      https://github.com/spack/spack-packages.git "${PACKAGES_REPO}"
+else
+  log "Using existing spack-packages source at ${PACKAGES_REPO}"
+fi
+
+# ---------------------------------------------------------------------------
 # Step 2: Set up a clean working copy
 # ---------------------------------------------------------------------------
 log "Setting up working directory at ${WORK_DIR} …"
@@ -74,7 +100,6 @@ mkdir -p "${SPACK_LITE_DIR}"
 
 # Rsync the essentials (skip .git, tests, docs, large binary blobs)
 rsync -a --exclude='.git' \
-         --exclude='var/spack/repos/builtin/packages' \
          --exclude='lib/spack/docs' \
          --exclude='lib/spack/test' \
          --exclude='share/spack/docker' \
@@ -85,12 +110,34 @@ rsync -a --exclude='.git' \
 
 # ---------------------------------------------------------------------------
 # Step 3: Prune the package repository — keep only the demo set
+#
+#         Spack's new Package API v2.x stores packages in the separate
+#         spack/spack-packages repository under repos/spack_repo/builtin/.
+#         The path inside the tarball must contain "spack_repo/" to satisfy
+#         Spack's v2 API directory-structure requirement (see spack/repo.py).
 # ---------------------------------------------------------------------------
-PKGS_DIR="${SPACK_LITE_DIR}/var/spack/repos/builtin/packages"
-ORIG_PKGS_DIR="${SPACK_REPO}/var/spack/repos/builtin/packages"
+BUILTIN_SRC="${PACKAGES_REPO}/repos/spack_repo/builtin"
+BUILTIN_DST="${SPACK_LITE_DIR}/var/spack/repos/spack_repo/builtin"
+PKGS_DIR="${BUILTIN_DST}/packages"
+ORIG_PKGS_DIR="${BUILTIN_SRC}/packages"
 
 log "Pruning package repository — keeping ${#KEEP_PKGS[@]} packages …"
 mkdir -p "${PKGS_DIR}"
+
+# Copy build_systems, __init__.py, and repo.yaml from spack-packages — these
+# are required for the v2.2 package API to load package classes correctly.
+if [[ -d "${BUILTIN_SRC}/build_systems" ]]; then
+  cp -r "${BUILTIN_SRC}/build_systems" "${BUILTIN_DST}/build_systems"
+else
+  log "WARNING: build_systems/ not found in ${BUILTIN_SRC} — v2 package API may fail"
+fi
+for f in __init__.py repo.yaml; do
+  if [[ -f "${BUILTIN_SRC}/${f}" ]]; then
+    cp "${BUILTIN_SRC}/${f}" "${BUILTIN_DST}/${f}"
+  else
+    log "WARNING: ${f} not found in ${BUILTIN_SRC} — v2 package API may fail"
+  fi
+done
 
 for pkg in "${KEEP_PKGS[@]}"; do
   src="${ORIG_PKGS_DIR}/${pkg}"
@@ -101,11 +148,6 @@ for pkg in "${KEEP_PKGS[@]}"; do
   fi
 done
 
-# Copy the repo.yaml so Spack recognises this as a valid package repo
-if [[ -f "${ORIG_PKGS_DIR}/../repo.yaml" ]]; then
-  cp "${ORIG_PKGS_DIR}/../repo.yaml" "${SPACK_LITE_DIR}/var/spack/repos/builtin/repo.yaml"
-fi
-
 # ---------------------------------------------------------------------------
 # Step 4: Inject browser configuration
 # ---------------------------------------------------------------------------
@@ -114,7 +156,7 @@ CFG_SRC="${REPO_ROOT}/spack_config"
 CFG_DST="${SPACK_LITE_DIR}/etc/spack"
 mkdir -p "${CFG_DST}"
 
-for f in config.yaml compilers.yaml packages.yaml; do
+for f in config.yaml compilers.yaml packages.yaml repos.yaml; do
   if [[ -f "${CFG_SRC}/${f}" ]]; then
     cp "${CFG_SRC}/${f}" "${CFG_DST}/${f}"
   fi

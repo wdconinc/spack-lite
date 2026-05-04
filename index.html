@@ -121,13 +121,15 @@ if (term.textarea) {
   // translates the textarea-value diff into backspace + insert sequences,
   // making terminal content disappear ("disappearing lines").
   //
-  // Intercepting beforeinput and calling preventDefault() stops the
-  // browser from modifying the textarea value, so the subsequent input
-  // event carries no change and xterm.js sends nothing to the terminal.
+  // Intercepting beforeinput for insertReplacementText (autocorrect word
+  // replacement) and calling preventDefault() stops the browser from
+  // modifying the textarea value, so the subsequent input event carries
+  // no change and xterm.js sends nothing to the terminal.
+  // Composition-related inputTypes (insertFromComposition,
+  // deleteByComposition) are intentionally not blocked so that IME input
+  // (e.g. Japanese, Chinese) continues to work.
   term.textarea.addEventListener('beforeinput', (e) => {
-    if (e.inputType === 'insertReplacementText' ||
-        e.inputType === 'insertFromComposition' ||
-        e.inputType === 'deleteByComposition') {
+    if (e.inputType === 'insertReplacementText' && e.cancelable) {
       e.preventDefault();
     }
   });

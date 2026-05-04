@@ -292,3 +292,91 @@ except ImportError:
     _fcntl.ioctl = _ioctl_stub
 
     sys.modules["fcntl"] = _fcntl
+
+# ---------------------------------------------------------------------------
+# 7.  Patch termios module (removed from Pyodide due to browser limitations)
+# ---------------------------------------------------------------------------
+try:
+    import termios  # noqa: F401
+except ImportError:
+    import types
+
+    _termios = types.ModuleType("termios")
+
+    # Common input-mode flags
+    _termios.IGNBRK = 0o000001
+    _termios.BRKINT = 0o000002
+    _termios.IGNPAR = 0o000004
+    _termios.INPCK  = 0o000020
+    _termios.ISTRIP = 0o000040
+    _termios.INLCR  = 0o000100
+    _termios.IGNCR  = 0o000200
+    _termios.ICRNL  = 0o000400
+    _termios.IXON   = 0o002000
+
+    # Common output-mode flags
+    _termios.OPOST  = 0o000001
+
+    # Common control-mode flags
+    _termios.CS8    = 0o000060
+    _termios.CREAD  = 0o000200
+    _termios.CLOCAL = 0o004000
+
+    # Common local-mode flags
+    _termios.ISIG   = 0o000001
+    _termios.ICANON = 0o000002
+    _termios.ECHO   = 0o000010
+    _termios.ECHOE  = 0o000020
+    _termios.ECHOK  = 0o000040
+    _termios.ECHONL = 0o000100
+    _termios.NOFLSH = 0o000200
+    _termios.IEXTEN = 0o100000
+
+    # tcsetattr 'when' values
+    _termios.TCSANOW   = 0
+    _termios.TCSADRAIN = 1
+    _termios.TCSAFLUSH = 2
+
+    # Baud rate constants (B0–B115200 subset)
+    _termios.B0      = 0o000000
+    _termios.B9600   = 0o000015
+    _termios.B19200  = 0o000016
+    _termios.B38400  = 0o000017
+    _termios.B57600  = 0o010001
+    _termios.B115200 = 0o010002
+
+    # Special character index constants
+    _termios.VMIN  = 6
+    _termios.VTIME = 5
+
+    # Number of control characters in the cc array (matches Linux/glibc NCCS)
+    _termios.NCCS = 32
+
+    # Exception type — mirrors termios.error in the real module
+    _termios.error = OSError
+
+    # tcgetattr returns a list: [iflag, oflag, cflag, lflag, ispeed, ospeed, cc]
+    # Return a reasonable "dumb terminal" attribute list.
+    def _tcgetattr(fd):
+        cc = [b'\x00'] * _termios.NCCS
+        cc[_termios.VMIN]  = b'\x01'
+        cc[_termios.VTIME] = b'\x00'
+        return [
+            _termios.ICRNL,          # iflag
+            _termios.OPOST,          # oflag
+            _termios.CS8 | _termios.CREAD | _termios.CLOCAL,  # cflag
+            _termios.ECHO | _termios.ICANON | _termios.ISIG | _termios.IEXTEN,  # lflag
+            _termios.B9600,          # ispeed
+            _termios.B9600,          # ospeed
+            cc,                      # cc
+        ]
+
+    # tcsetattr and tcflush are no-ops — there is no real tty in the browser.
+    _termios.tcgetattr = _tcgetattr
+    _termios.tcsetattr = lambda fd, when, attrs: None
+    _termios.tcsendbreak = lambda fd, duration: None
+    _termios.tcdrain = lambda fd: None
+    _termios.tcflush = lambda fd, queue: None
+    _termios.tcflow = lambda fd, action: None
+
+    sys.modules["termios"] = _termios

@@ -113,6 +113,24 @@ if (term.textarea) {
   term.textarea.setAttribute('autocorrect', 'off');
   term.textarea.setAttribute('autocapitalize', 'none');
   term.textarea.setAttribute('spellcheck', 'false');
+
+  // HTML attributes alone are not enough: on iOS/Android the keyboard
+  // still fires autocorrect replacements through the beforeinput/input
+  // event path, bypassing xterm.js's keydown handler entirely.  xterm.js
+  // processes these input events internally (not via term.onKey) and
+  // translates the textarea-value diff into backspace + insert sequences,
+  // making terminal content disappear ("disappearing lines").
+  //
+  // Intercepting beforeinput and calling preventDefault() stops the
+  // browser from modifying the textarea value, so the subsequent input
+  // event carries no change and xterm.js sends nothing to the terminal.
+  term.textarea.addEventListener('beforeinput', (e) => {
+    if (e.inputType === 'insertReplacementText' ||
+        e.inputType === 'insertFromComposition' ||
+        e.inputType === 'deleteByComposition') {
+      e.preventDefault();
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------

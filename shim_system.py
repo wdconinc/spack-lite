@@ -9,7 +9,8 @@ browser where fork(2), exec(2), and most POSIX syscalls are unavailable.
 Modules patched
 ---------------
 1.  os / platform   — fake Linux x86_64 uname / machine / system identity
-2.  subprocess      — all shell-out calls return canned mock responses
+2.  subprocess      — shell-out calls delegated to wasm-git (git) or
+                      return canned mock responses for everything else
 3.  os.environ      — sane default environment variables
 4.  filesystem      — required ~/.spack directory tree created up front
 5.  grp / pwd       — group and password database stubs
@@ -20,6 +21,15 @@ Modules patched
 10. ssl             — stub context / wrap_socket (browser handles TLS at JS layer)
 11. lzma            — raises LZMAError on use (no WASM lzma available by default)
 12. fake executables — stub files in /usr/bin so which_string() finds git/gcc/etc.
+
+Git operations
+--------------
+When wasm-git is available (loaded by worker.js as `self.gitCall`), git
+subprocess calls are delegated to libgit2-compiled-to-WASM running in the
+same Web Worker.  `git clone` results are automatically bridged from
+wasm-git's MEMFS into Pyodide's MEMFS so Python can read the cloned files.
+If wasm-git is not loaded (e.g. CDN unreachable) the shim falls back to
+canned mock responses so that read-only spack commands still work.
 
 This file is the **single canonical source** for all Pyodide compatibility
 shims.  worker.js fetches it over HTTP and executes it at start-up; there
@@ -48,6 +58,7 @@ import sys
 import os
 import platform
 import collections
+import json as _json
 
 # ---------------------------------------------------------------------------
 # 1.  Platform identity — make Spack detect "Linux x86_64"
@@ -106,6 +117,10 @@ platform.uname = lambda: _UnameTuple(
 
 # ---------------------------------------------------------------------------
 # 2.  subprocess shim — intercept all shell-out calls
+#
+#     Git commands are delegated to wasm-git (libgit2 compiled to WASM)
+#     via self.gitCall exposed by worker.js.  All other commands return
+#     canned mock responses sufficient for spack's probing / version checks.
 # ---------------------------------------------------------------------------
 import subprocess  # noqa: E402 — must come after platform patching
 from unittest.mock import MagicMock  # noqa: E402
@@ -117,6 +132,7 @@ def _build_mock_result(args=None, **kwargs):
 
     stdout = b""
     stderr = b""
+    exit_code = 0  # only overridden in the git branch below
 
     if "uname" in cmd:
         stdout = b"x86_64\n"
@@ -127,7 +143,30 @@ def _build_mock_result(args=None, **kwargs):
     elif "gfortran" in cmd or "fortran" in cmd:
         stdout = b"GNU Fortran (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0\n"
     elif "git" in cmd:
-        if "rev-parse" in cmd or "log" in cmd:
+        # Delegate to wasm-git (libgit2 compiled to WASM) when available.
+        # worker.js exposes self.gitCall(argsJson) which runs the real git
+        # binary in wasm-git's sandbox and returns captured stdout.  For
+        # `git clone` it also bridges the cloned tree into Pyodide's MEMFS.
+        # Fall back to mock responses when wasm-git is not loaded (e.g. CDN
+        # unreachable) so that read-only spack commands still work.
+        git_args = list(args) if isinstance(args, (list, tuple)) else __import__("shlex").split(str(args or ""))
+        # Strip the 'git' executable name — wasm-git's callMain is git itself.
+        # The fake stub is installed at /usr/bin/git, so argv[0] may be a
+        # full path; compare by basename to handle both 'git' and '/usr/bin/git'.
+        if git_args and os.path.basename(git_args[0]) == "git":
+            git_args = git_args[1:]
+        _wasm_result = None
+        try:
+            import js as _js
+            if hasattr(_js, "gitCall"):
+                _wasm_result = _json.loads(_js.gitCall(_json.dumps(git_args)))
+        except Exception:
+            pass
+        if _wasm_result is not None:
+            stdout    = (_wasm_result.get("stdout") or "").encode()
+            stderr    = (_wasm_result.get("stderr") or "").encode()
+            exit_code = int(_wasm_result.get("returncode") or 0)
+        elif "rev-parse" in cmd or "log" in cmd:
             stdout = b"abc1234\n"
         else:
             stdout = b"git version 2.34.1\n"
@@ -158,7 +197,7 @@ def _build_mock_result(args=None, **kwargs):
     result = MagicMock()
     result.stdout = stdout
     result.stderr = stderr
-    result.returncode = 0
+    result.returncode = exit_code
     result.args = args
     return result
 

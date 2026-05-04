@@ -19,6 +19,7 @@ Modules patched
 9.  fcntl           — file-locking no-ops; fcntl/ioctl raise ENOSYS/ENOTTY
 10. ssl             — stub context / wrap_socket (browser handles TLS at JS layer)
 11. lzma            — raises LZMAError on use (no WASM lzma available by default)
+12. fake executables — stub files in /usr/bin so which_string() finds git/gcc/etc.
 
 This file is the **single canonical source** for all Pyodide compatibility
 shims.  worker.js fetches it over HTTP and executes it at start-up; there
@@ -658,3 +659,47 @@ except ImportError:
     _lzma.open = open
 
     sys.modules["lzma"] = _lzma
+
+# ---------------------------------------------------------------------------
+# 12.  Fake executable stubs in the MEMFS PATH
+#
+#      Spack's which_string() checks whether executables exist on the
+#      filesystem (is_file() + os.access(..., os.X_OK)) before attempting to
+#      run them.  In the Pyodide WASM environment there is no real /usr/bin,
+#      so which_string() always returns None and calls like
+#      spack.util.git.git(required=True) — triggered by `spack info` when it
+#      inspects a package that has a git-based version — raise:
+#
+#          Error: spack requires 'git'. Make sure it is in your path.
+#
+#      Creating lightweight placeholder files with mode 0o755 satisfies the
+#      filesystem check.  Actual execution is intercepted by the subprocess
+#      shim (section 2) which returns canned mock responses, so the stub
+#      script content is never read.
+# ---------------------------------------------------------------------------
+_STUB_SCRIPT = b"#!/bin/sh\n# browser stub — intercepted by subprocess shim\n"
+
+_FAKE_EXECUTABLES = [
+    "/usr/bin/git",
+    "/usr/bin/gcc",
+    "/usr/bin/g++",
+    "/usr/bin/gfortran",
+    "/usr/bin/make",
+    "/usr/bin/cmake",
+    "/usr/bin/clingo",
+    "/usr/bin/patch",
+    "/usr/bin/tar",
+    "/usr/bin/curl",
+    "/usr/bin/unzip",
+]
+
+for _exe_path in _FAKE_EXECUTABLES:
+    try:
+        _exe_dir = os.path.dirname(_exe_path)
+        os.makedirs(_exe_dir, exist_ok=True)
+        if not os.path.exists(_exe_path):
+            with open(_exe_path, "wb") as _f:
+                _f.write(_STUB_SCRIPT)
+            os.chmod(_exe_path, 0o755)
+    except (PermissionError, OSError):
+        pass  # Silently skip on non-Pyodide hosts

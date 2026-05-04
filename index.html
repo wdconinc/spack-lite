@@ -175,7 +175,7 @@ term.onKey(({ key, domEvent }) => {
     savedInput   = '';
     term.write('\r\n');
     // Record non-empty commands in history (avoid consecutive duplicates).
-    if (line && line !== cmdHistory[cmdHistory.length - 1]) {
+    if (line && (cmdHistory.length === 0 || line !== cmdHistory[cmdHistory.length - 1])) {
       cmdHistory.push(line);
     }
     if (resolveInput) { resolveInput(line); resolveInput = null; }

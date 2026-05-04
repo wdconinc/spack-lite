@@ -483,7 +483,7 @@ def _cmd_find(args, stdin):
 def _cmd_spack(args, stdin):
     """Route spack sub-commands through the Spack Python API."""
     try:
-        from spack.main import SpackCommand, SpackCommandError  # noqa: F401
+        from spack.main import SpackCommand, SpackCommandError
     except ImportError:
         return (
             "spack: not available — build spack-lite.tar.gz with\n"
@@ -506,7 +506,7 @@ def _cmd_spack(args, stdin):
             pass
         except SpackCommandError as exc:
             buf.write(f'\nError: {exc}\n')
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # broad catch: SpackCommand can raise many internal errors
             buf.write(f'\nError: {exc}\n')
     finally:
         sys.stdout = old_stdout
@@ -576,7 +576,7 @@ def run_shell_command(line):
                 stdin_text = f'{cmd_name}: command not found\n'
             else:
                 stdin_text = handler(cmd_args, stdin_text) or ''
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # safety net: keep the shell alive if a handler raises unexpectedly
             stdin_text = f'Error in {stage!r}: {exc}\n'
 
     return json.dumps({'output': stdin_text, 'cwd': _display_cwd()})

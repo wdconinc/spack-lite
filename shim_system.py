@@ -313,7 +313,8 @@ except ImportError:
     _termios.CLOCAL = 2048
 
     # Return a dummy attribute list: [iflag, oflag, cflag, lflag, ispeed, ospeed, cc]
-    # lflag = 0 means ICANON and ECHO are both off, which is the safe-for-browser default.
+    # lflag = 0 means no flags are set (ICANON and ECHO are disabled because their
+    # bit values are not set in lflag), which is the safe-for-browser default.
     _termios.tcgetattr = lambda fd: [0, 0, 0, 0, 0, 0, [0] * 32]
     _termios.tcsetattr = lambda fd, when, attrs: None
     _termios.tcdrain = lambda fd: None

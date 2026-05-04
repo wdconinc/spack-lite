@@ -43,6 +43,7 @@ For local testing outside Pyodide (standard CPython):
     exec(compile(open('/path/to/shim_system.py').read(), 'shim_system.py', 'exec'))
 """
 
+import builtins
 import sys
 import os
 import platform
@@ -653,7 +654,7 @@ except ImportError:
     _lzma.LZMACompressor = _LZMACompressor
     _lzma.LZMADecompressor = _LZMADecompressor
 
-    def open(*args, **kwargs):  # noqa: A001 — shadows builtin only within this scope
+    def open(*args, **kwargs):  # noqa: A001 — shadows builtin at module scope; use builtins.open elsewhere
         raise _LZMAError(_LZMA_UNAVAILABLE)
 
     _lzma.open = open
@@ -677,7 +678,7 @@ except ImportError:
 #      shim (section 2) which returns canned mock responses, so the stub
 #      script content is never read.
 # ---------------------------------------------------------------------------
-_STUB_SCRIPT = b"#!/bin/sh\n# browser stub — intercepted by subprocess shim\n"
+_STUB_SCRIPT = b"#!/bin/sh\n# browser stub -- intercepted by subprocess shim\n"
 
 _FAKE_EXECUTABLES = [
     "/usr/bin/git",
@@ -698,7 +699,7 @@ for _exe_path in _FAKE_EXECUTABLES:
         _exe_dir = os.path.dirname(_exe_path)
         os.makedirs(_exe_dir, exist_ok=True)
         if not os.path.exists(_exe_path):
-            with open(_exe_path, "wb") as _f:
+            with builtins.open(_exe_path, "wb") as _f:
                 _f.write(_STUB_SCRIPT)
             os.chmod(_exe_path, 0o755)
     except (PermissionError, OSError):

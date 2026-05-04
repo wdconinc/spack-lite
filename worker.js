@@ -303,6 +303,51 @@ except ImportError:
     _fcntl.fcntl = _fcntl_stub
     _fcntl.ioctl = _ioctl_stub
     sys.modules['fcntl'] = _fcntl
+
+# --- termios shim (removed from Pyodide) ---
+try:
+    import termios
+except ImportError:
+    import types as _types
+    _termios = _types.ModuleType('termios')
+    _termios.IGNBRK  = 0o000001
+    _termios.BRKINT  = 0o000002
+    _termios.ICRNL   = 0o000400
+    _termios.IXON    = 0o002000
+    _termios.OPOST   = 0o000001
+    _termios.CS8     = 0o000060
+    _termios.CREAD   = 0o000200
+    _termios.CLOCAL  = 0o004000
+    _termios.ISIG    = 0o000001
+    _termios.ICANON  = 0o000002
+    _termios.ECHO    = 0o000010
+    _termios.ECHOE   = 0o000020
+    _termios.ECHOK   = 0o000040
+    _termios.ECHONL  = 0o000100
+    _termios.NOFLSH  = 0o000200
+    _termios.IEXTEN  = 0o100000
+    _termios.TCSANOW   = 0
+    _termios.TCSADRAIN = 1
+    _termios.TCSAFLUSH = 2
+    _termios.B9600   = 0o000015
+    _termios.B115200 = 0o010002
+    _termios.VMIN    = 6
+    _termios.VTIME   = 5
+    def _tcgetattr(fd):
+        cc = [b'\\x00'] * 32
+        cc[_termios.VMIN]  = b'\\x01'
+        cc[_termios.VTIME] = b'\\x00'
+        return [_termios.ICRNL, _termios.OPOST,
+                _termios.CS8 | _termios.CREAD | _termios.CLOCAL,
+                _termios.ECHO | _termios.ICANON | _termios.ISIG | _termios.IEXTEN,
+                _termios.B9600, _termios.B9600, cc]
+    _termios.tcgetattr  = _tcgetattr
+    _termios.tcsetattr  = lambda fd, when, attrs: None
+    _termios.tcsendbreak = lambda fd, duration: None
+    _termios.tcdrain    = lambda fd: None
+    _termios.tcflush    = lambda fd, queue: None
+    _termios.tcflow     = lambda fd, action: None
+    sys.modules['termios'] = _termios
 `;
 
 // ---------------------------------------------------------------------------

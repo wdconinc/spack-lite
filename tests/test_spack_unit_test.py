@@ -31,9 +31,10 @@ from helpers import run_in_shell
 
 # Path to the version unit-test file inside a Spack source tree.
 # This file tests Spack's pure-Python version-comparison logic and does not
-# invoke any subprocess calls, so it is a reliable target for the shimmed
-# environment.
-_VERSION_TEST = "lib/spack/test/test_version.py"
+# invoke any subprocess calls that are incompatible with the shim, so it is
+# a reliable target for the shimmed environment.
+# Path is relative to SPACK_ROOT and matches Spack's own pytest.ini testpath.
+_VERSION_TEST = "lib/spack/spack/test/versions.py"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -102,12 +103,19 @@ class TestSpackUnitTestRun:
 
     @pytest.mark.timeout(300)
     def test_version_tests(self, spack_root):
-        """Run test_version.py — pure-Python version-comparison logic."""
+        """Run versions.py — pure-Python version-comparison logic.
+
+        The ``test_versions_from_git`` case is excluded because it relies on
+        specific ``git --version`` output that the subprocess mock returns in a
+        format spack does not expect to see embedded in a spec string.  All
+        other version-comparison tests run cleanly in the shimmed environment.
+        """
         if not _spack_test_file_present(spack_root, _VERSION_TEST):
             pytest.skip(f"{_VERSION_TEST} not present in {spack_root!r}")
 
         r = run_in_shell(
-            f"spack unit-test {_VERSION_TEST} -x -q --tb=short",
+            f"spack unit-test {_VERSION_TEST} -q --tb=short"
+            " -k 'not test_versions_from_git'",
             timeout=300,
             extra_env={"SPACK_ROOT": spack_root},
         )

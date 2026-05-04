@@ -159,10 +159,10 @@ def _cmd_ls(args, stdin):
     if not paths:
         paths = [os.getcwd()]
 
-    def _format_entry(name, full_path):
+    def _format_entry(name, full_path, use_long):
         """Return a single formatted line for *name* at *full_path*."""
         is_dir = os.path.isdir(full_path)
-        if long_fmt:
+        if use_long:
             try:
                 size = os.stat(full_path).st_size
             except OSError:
@@ -178,12 +178,12 @@ def _cmd_ls(args, stdin):
             if not show_all:
                 entries = [e for e in entries if not e.startswith('.')]
             for e in entries:
-                out.append(_format_entry(e, os.path.join(path, e)))
+                out.append(_format_entry(e, os.path.join(path, e), long_fmt))
         except FileNotFoundError:
             out.append(f"ls: cannot access '{path}': No such file or directory")
         except NotADirectoryError:
             # path is a plain file — show it directly (respects -l)
-            out.append(_format_entry(os.path.basename(path), path))
+            out.append(_format_entry(os.path.basename(path), path, long_fmt))
     return '\n'.join(out) + '\n' if out else ''
 
 

@@ -10,7 +10,9 @@
  *     install stubs for Pyodide-removed modules (termios, tty, readline,
  *     fcntl, grp, pwd)
  *  5. Inject a fake compiler + package configuration into ~/.spack
- *  6. Receive { type: 'run', command: '...' } messages and return results
+ *  6. Execute shell.py to install the Python-backed POSIX shell interpreter
+ *  7. Receive { type: 'run', command: '...' } messages and return results
+ *     including the new working directory after each command
  */
 
 'use strict';
@@ -147,7 +149,6 @@ function _copyTree(srcFS, srcPath, dstFS, dstPath) {
 // ---------------------------------------------------------------------------
 let pyodide = null;
 let lg      = null;  // wasm-git module handle (null until loaded)
-let spackLoaded = false;
 
 async function init() {
   try {
@@ -270,7 +271,6 @@ import os
 os.makedirs('/home/pyodide/spack', exist_ok=True)
 `);
         pyodide.unpackArchive(buffer, 'gztar', { extractDir: '/home/pyodide' });
-        spackLoaded = true;
       }
     } catch (fetchErr) {
       console.warn('spack-lite.tar.gz not found — running in demo mode:', fetchErr);
@@ -325,7 +325,20 @@ for path, content in cfg_files.items():
     const shimCode = await shimResponse.text();
     await pyodide.runPythonAsync(shimCode);
 
-    // 8. Done
+    // 8. Load and execute the shell interpreter
+    // shell.py defines run_shell_command() which handles built-in POSIX-like
+    // commands (ls, cd, cat, grep, …) and routes `spack` through the Spack
+    // Python API.  It must be loaded after shim_system.py so that the module
+    // shims are in place before any spack imports are attempted.
+    setStatus('loading', 'Loading shell…');
+    const shellResponse = await fetch('shell.py');
+    if (!shellResponse.ok) {
+      throw new Error(`Failed to fetch shell.py (HTTP ${shellResponse.status})`);
+    }
+    const shellCode = await shellResponse.text();
+    await pyodide.runPythonAsync(shellCode);
+
+    // 9. Done
     setStatus('ready', 'Ready');
 
   } catch (err) {
@@ -337,62 +350,20 @@ for path, content in cfg_files.items():
 // ---------------------------------------------------------------------------
 // Command runner
 // ---------------------------------------------------------------------------
-const RUN_COMMAND_PY = `
-import io, sys
 
-class _SpackBuffer(io.StringIO):
-    """StringIO that provides fileno()/isatty() so Spack's TTY-detection code
-    does not raise io.UnsupportedOperation and abort the command."""
-    def fileno(self):
-        return 1  # pretend to be stdout; os.isatty(1) is False in Pyodide
-    def isatty(self):
-        return False
-
-def _run_spack_command(command_str):
-    """Execute a spack CLI command and return captured output as a string."""
-    parts = command_str.strip().split()
-    if not parts:
-        return ''
-
-    # Verify we are talking to spack
-    if parts[0].lower() != 'spack':
-        return f"Unknown command: {parts[0]}\\nTry: spack list | spack info <pkg> | spack spec <spec>\\n"
-
-    spack_args = parts[1:]
-
-    # Capture stdout
-    buf = _SpackBuffer()
-    old_stdout = sys.stdout
-    old_stderr = sys.stderr
-    try:
-        sys.stdout = buf
-        sys.stderr = buf
-        try:
-            from spack.main import SpackCommand, SpackCommandError
-            if not spack_args:
-                sys.stdout = old_stdout
-                sys.stderr = old_stderr
-                return "Usage: spack <command> [options]\\nTry 'help' for available commands.\\n"
-            cmd = SpackCommand(spack_args[0])
-            cmd(*spack_args[1:])
-        except SystemExit:
-            pass
-        except Exception as e:
-            buf.write(f"\\nError: {e}\\n")
-    finally:
-        sys.stdout = old_stdout
-        sys.stderr = old_stderr
-
-    return buf.getvalue()
-`;
-
-async function runSpackCommand(cmdStr) {
-  // Make sure the helper is defined
-  await pyodide.runPythonAsync(RUN_COMMAND_PY);
-  const result = await pyodide.runPythonAsync(
-    `_run_spack_command(${JSON.stringify(cmdStr)})`
+async function runShellCommand(cmdStr) {
+  // run_shell_command() is defined by shell.py which is loaded during init().
+  // It returns a JSON string: {"output": "...", "cwd": "..."}.
+  const resultJson = await pyodide.runPythonAsync(
+    `run_shell_command(${JSON.stringify(cmdStr)})`
   );
-  return result ?? '';
+  try {
+    const { output, cwd } = JSON.parse(resultJson);
+    return { output: output ?? '', cwd: cwd ?? '~' };
+  } catch (_) {
+    // Fallback: treat the raw return value as plain output
+    return { output: String(resultJson ?? ''), cwd: '~' };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -406,15 +377,9 @@ self.onmessage = async ({ data }) => {
     return;
   }
 
-  if (!spackLoaded) {
-    post('result', { output: 'Spack archive not loaded (demo mode). ' +
-      'Build spack-lite.tar.gz with scripts/make_spack_lite.sh and serve it alongside index.html.\n' });
-    return;
-  }
-
   try {
-    const output = await runSpackCommand(data.command);
-    post('result', { output });
+    const { output, cwd } = await runShellCommand(data.command);
+    post('result', { output, cwd });
   } catch (err) {
     post('error', { message: String(err) });
   }

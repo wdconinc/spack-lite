@@ -136,11 +136,27 @@ if (term.textarea) {
 }
 
 // ---------------------------------------------------------------------------
-// Input line editor (simple, single-line)
+// Input line editor — supports history navigation with ↑ / ↓
 // ---------------------------------------------------------------------------
-let inputBuffer = '';
+let inputBuffer  = '';
 let inputEnabled = false;
 let resolveInput = null;
+
+// Command history — newest entry is at the end.
+// historyIndex counts backwards from the end (-1 = not navigating).
+let cmdHistory   = [];
+let historyIndex = -1;
+let savedInput   = '';   // preserves in-progress input during history browsing
+
+// Current working directory shown in the prompt (updated after each command).
+let currentCwd = '~';
+
+function getPrompt() {
+  // Strip ASCII control characters (including ESC) to prevent terminal
+  // escape-sequence injection via crafted directory names.
+  const safeCwd = currentCwd.replace(/[\x00-\x1f\x7f]/g, '');
+  return `\x1b[32mspack-lite\x1b[0m:\x1b[34m${safeCwd}\x1b[0m$ `;
+}
 
 function enableInput() {
   inputEnabled = true;
@@ -154,19 +170,43 @@ term.onKey(({ key, domEvent }) => {
   if (!inputEnabled) return;
 
   const code = domEvent.keyCode;
-  if (code === 13) {                 // Enter
-    term.write('\r\n');
+
+  if (code === 13) {                       // Enter
     const line = inputBuffer;
-    inputBuffer = '';
-    if (resolveInput) {
-      resolveInput(line);
-      resolveInput = null;
+    inputBuffer  = '';
+    historyIndex = -1;
+    savedInput   = '';
+    term.write('\r\n');
+    // Record non-empty commands in history (avoid consecutive duplicates).
+    if (line && (cmdHistory.length === 0 || line !== cmdHistory[cmdHistory.length - 1])) {
+      cmdHistory.push(line);
     }
-  } else if (code === 8) {           // Backspace
+    if (resolveInput) { resolveInput(line); resolveInput = null; }
+
+  } else if (code === 8) {                 // Backspace
     if (inputBuffer.length > 0) {
       inputBuffer = inputBuffer.slice(0, -1);
       term.write('\b \b');
     }
+
+  } else if (code === 38) {               // ↑  — older history entry
+    domEvent.preventDefault();
+    if (cmdHistory.length === 0) return;
+    if (historyIndex === -1) savedInput = inputBuffer;
+    historyIndex = Math.min(historyIndex + 1, cmdHistory.length - 1);
+    const entry = cmdHistory[cmdHistory.length - 1 - historyIndex];
+    term.write('\r\x1b[K' + getPrompt() + entry);
+    inputBuffer = entry;
+
+  } else if (code === 40) {               // ↓  — newer history entry / restore
+    domEvent.preventDefault();
+    if (historyIndex === -1) return;
+    historyIndex -= 1;
+    const entry = historyIndex === -1 ? savedInput
+                                      : cmdHistory[cmdHistory.length - 1 - historyIndex];
+    term.write('\r\x1b[K' + getPrompt() + entry);
+    inputBuffer = entry;
+
   } else if (key >= ' ' && key.length === 1) {
     inputBuffer += key;
     term.write(key);
@@ -227,17 +267,28 @@ function runCommand(cmdStr) {
 // ---------------------------------------------------------------------------
 // REPL
 // ---------------------------------------------------------------------------
-const PROMPT = '\x1b[32mspack-lite\x1b[0m \x1b[34m$\x1b[0m ';
-
 const HELP_TEXT = `
 \x1b[33mAvailable commands:\x1b[0m
-  spack list [<query>]        — list available packages
-  spack info <package>        — show package metadata
-  spack spec <spec>           — concretize a spec
-  help                        — show this help
-  clear                       — clear the terminal
+  \x1b[1mspack\x1b[0m list [<query>]        — list available packages
+  \x1b[1mspack\x1b[0m info <package>        — show package metadata
+  \x1b[1mspack\x1b[0m spec <spec>           — concretize a spec
+  \x1b[1mls\x1b[0m [-la] [<path>]          — list directory contents
+  \x1b[1mcd\x1b[0m [<path>]               — change directory  (\x1b[2m~ supported\x1b[0m)
+  \x1b[1mpwd\x1b[0m                        — print working directory
+  \x1b[1mcat\x1b[0m <file>                 — print file contents
+  \x1b[1mecho\x1b[0m <text>                — print text
+  \x1b[1mgrep\x1b[0m [-inv] <pat> [<file>] — search for pattern
+  \x1b[1mhead\x1b[0m / \x1b[1mtail\x1b[0m [-n N] [<file>]  — first / last N lines
+  \x1b[1mmkdir\x1b[0m / \x1b[1mrm\x1b[0m / \x1b[1mcp\x1b[0m / \x1b[1mmv\x1b[0m       — file operations
+  \x1b[1menv\x1b[0m                        — show environment variables
+  \x1b[1mwhich\x1b[0m <cmd>                — locate a command or built-in
+  \x1b[1mfind\x1b[0m [<path>] [-name <pat>] [-type f|d] — find files
+  \x1b[1mhelp\x1b[0m                       — show this help
+  \x1b[1mclear\x1b[0m                      — clear the terminal
+  \x1b[2m↑ / ↓ arrow keys navigate command history\x1b[0m
 
 \x1b[2mTip: try  spack spec zlib+shared\x1b[0m
+\x1b[2mTip: try  ls /home/pyodide/spack/lib/spack | head -20\x1b[0m
 `;
 
 async function startREPL() {
@@ -247,7 +298,7 @@ async function startREPL() {
   enableInput();
 
   while (true) {
-    term.write(PROMPT);
+    term.write(getPrompt());
     const line = (await readLine()).trim();
     if (!line) continue;
 
@@ -260,6 +311,9 @@ async function startREPL() {
       const result = await runCommand(line);
       if (result.output) {
         term.write(result.output.replace(/\n/g, '\r\n'));
+      }
+      if (result.cwd !== undefined) {
+        currentCwd = result.cwd;
       }
     } catch (err) {
       term.write('\x1b[31mError: ' + err + '\x1b[0m\r\n');

@@ -106,6 +106,15 @@ term.open(document.getElementById('terminal'));
 fitAddon.fit();
 window.addEventListener('resize', () => fitAddon.fit());
 
+// Prevent mobile keyboards from autocorrecting / autocapitalising input,
+// which would garble the terminal line when space is typed after an
+// unrecognised word like "spack".
+if (term.textarea) {
+  term.textarea.setAttribute('autocorrect', 'off');
+  term.textarea.setAttribute('autocapitalize', 'none');
+  term.textarea.setAttribute('spellcheck', 'false');
+}
+
 // ---------------------------------------------------------------------------
 // Input line editor (simple, single-line)
 // ---------------------------------------------------------------------------

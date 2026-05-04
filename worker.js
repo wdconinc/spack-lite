@@ -397,25 +397,25 @@ except ImportError:
     class _SSLContext:
         def __init__(self, protocol=None):
             self.check_hostname = False
-            self.verify_mode = 0
-            self.options = 0x80000054
+            self.verify_mode = _ssl.CERT_NONE
+            self.options = _ssl.OP_ALL
         def load_verify_locations(self, cafile=None, capath=None, cadata=None): pass
         def load_cert_chain(self, certfile, keyfile=None, password=None): pass
         def set_default_verify_paths(self): pass
         def set_ciphers(self, ciphers): pass
         def wrap_socket(self, sock, server_side=False, do_handshake_on_connect=True,
                         suppress_ragged_eofs=True, server_hostname=None):
-            return sock
+            raise _SSLError('SSL wrapping is not supported in the Pyodide WebAssembly environment')
     _ssl.SSLContext = _SSLContext
     def _create_default_context(purpose=None, *, cafile=None, capath=None, cadata=None):
-        return _SSLContext(16)
+        return _SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
     _ssl.create_default_context = _create_default_context
     _ssl._create_default_https_context = _create_default_context
     _ssl._create_unverified_context = _create_default_context
     def _wrap_socket(sock, keyfile=None, certfile=None, server_side=False,
                      cert_reqs=None, ssl_version=None, ca_certs=None,
                      do_handshake_on_connect=True, suppress_ragged_eofs=True, ciphers=None):
-        return sock
+        raise _SSLError('SSL wrapping is not supported in the Pyodide WebAssembly environment')
     _ssl.wrap_socket = _wrap_socket
     sys.modules['ssl'] = _ssl
 
@@ -456,9 +456,9 @@ except ImportError:
     _lzma.MF_BT3 = 19
     _lzma.MF_BT4 = 20
     _LZMA_MSG = 'lzma compression is not available in the Pyodide WebAssembly environment'
-    def _lzma_compress(data, format=1, check=-1, preset=None, filters=None):
+    def _lzma_compress(data, format=_lzma.FORMAT_XZ, check=-1, preset=None, filters=None):
         raise _LZMAError(_LZMA_MSG)
-    def _lzma_decompress(data, format=0, memlimit=None, filters=None):
+    def _lzma_decompress(data, format=_lzma.FORMAT_AUTO, memlimit=None, filters=None):
         raise _LZMAError(_LZMA_MSG)
     _lzma.compress = _lzma_compress
     _lzma.decompress = _lzma_decompress

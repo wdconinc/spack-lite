@@ -465,7 +465,7 @@ except ImportError:
 
         def wrap_socket(self, sock, server_side=False, do_handshake_on_connect=True,
                         suppress_ragged_eofs=True, server_hostname=None):
-            return sock
+            raise _SSLError("SSL wrapping is not supported in the Pyodide WebAssembly environment")
 
     _ssl.SSLContext = _SSLContext
 
@@ -481,7 +481,7 @@ except ImportError:
                      cert_reqs=None, ssl_version=None, ca_certs=None,
                      do_handshake_on_connect=True, suppress_ragged_eofs=True,
                      ciphers=None):
-        return sock
+        raise _SSLError("SSL wrapping is not supported in the Pyodide WebAssembly environment")
 
     _ssl.wrap_socket = _wrap_socket
 

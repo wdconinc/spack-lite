@@ -166,3 +166,114 @@ class TestMultiprocessingPrimitives:
         assert r.returncode == 0, r.stderr
         assert r.stdout.strip() == "True"
 
+
+# ---------------------------------------------------------------------------
+# _posixshmem shim tests (section 14)
+# ---------------------------------------------------------------------------
+
+# Preamble that blocks both _multiprocessing and _posixshmem so the shim
+# must install stubs for both — exactly as Pyodide does.
+_PREAMBLE_BOTH = f"""\
+import sys
+import builtins
+
+_real_import = builtins.__import__
+
+_BLOCKED = {{'_multiprocessing', '_posixshmem'}}
+
+def _blocking_import(name, *args, **kwargs):
+    if name in _BLOCKED and name not in sys.modules:
+        raise ImportError(
+            "The module '" + name + "' is removed from the Python "
+            "standard library in the Pyodide distribution due to browser "
+            "limitations."
+        )
+    return _real_import(name, *args, **kwargs)
+
+builtins.__import__ = _blocking_import
+
+for _key in list(sys.modules.keys()):
+    if 'multiprocessing' in _key or _key in _BLOCKED:
+        del sys.modules[_key]
+
+exec(compile(open({_SHIM_PATH!r}).read(), {_SHIM_PATH!r}, "exec"))
+"""
+
+
+def _run_shim_script_both(code: str, *, timeout: int = 30) -> subprocess.CompletedProcess:
+    """Run *code* in a subprocess where both ``_multiprocessing`` and
+    ``_posixshmem`` are blocked to simulate the full Pyodide environment.
+    """
+    script = _PREAMBLE_BOTH + code
+    return subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+class TestPosixShMemShimImport:
+    """The _posixshmem stub lets shared-memory-related imports succeed."""
+
+    def test_posixshmem_in_sys_modules(self):
+        """_posixshmem must be registered in sys.modules after the shim runs."""
+        r = _run_shim_script_both(
+            "import sys; print('_posixshmem' in sys.modules)"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "True"
+
+    def test_import_shared_memory(self):
+        """``import multiprocessing.shared_memory`` must succeed under the shim."""
+        r = _run_shim_script_both(
+            "import multiprocessing.shared_memory; print('ok')"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "ok"
+
+    def test_import_managers(self):
+        """``import multiprocessing.managers`` must succeed under the shim."""
+        r = _run_shim_script_both(
+            "import multiprocessing.managers; print('ok')"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "ok"
+
+    def test_shm_open_raises_oserror(self):
+        """_posixshmem.shm_open must raise OSError (not ImportError)."""
+        r = _run_shim_script_both(
+            "import _posixshmem, os\n"
+            "try:\n"
+            "    _posixshmem.shm_open('/test', os.O_CREAT | os.O_RDWR, 0o600)\n"
+            "    print('no-error')\n"
+            "except OSError:\n"
+            "    print('OSError')\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "OSError"
+
+    def test_shm_unlink_raises_oserror(self):
+        """_posixshmem.shm_unlink must raise OSError (not ImportError)."""
+        r = _run_shim_script_both(
+            "import _posixshmem\n"
+            "try:\n"
+            "    _posixshmem.shm_unlink('/test')\n"
+            "    print('no-error')\n"
+            "except OSError:\n"
+            "    print('OSError')\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "OSError"
+
+    def test_multiprocessing_managers_still_loads_locks(self):
+        """multiprocessing.Lock() still works when both shims are active."""
+        r = _run_shim_script_both(
+            "import multiprocessing\n"
+            "lock = multiprocessing.Lock()\n"
+            "with lock:\n"
+            "    print('inside')\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert "inside" in r.stdout
+

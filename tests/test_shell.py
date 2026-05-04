@@ -6,6 +6,8 @@ shim_system.py monkey-patches are active during execution, exactly
 mirroring the browser's Pyodide environment.
 """
 
+import os
+
 import pytest
 from helpers import run_in_shell
 
@@ -75,29 +77,45 @@ class TestLs:
 
 class TestMkdirRmCpMv:
     def test_mkdir_rm(self):
-        r = run_in_shell("mkdir -p /tmp/spack_lite_test_dir && ls /tmp | grep spack_lite_test_dir && rm -rf /tmp/spack_lite_test_dir")
+        run_in_shell("mkdir -p /tmp/spack_lite_test_dir")
+        r = run_in_shell("ls /tmp | grep spack_lite_test_dir")
         assert r.returncode == 0
         assert "spack_lite_test_dir" in r.stdout
+        run_in_shell("rm -rf /tmp/spack_lite_test_dir")
 
     def test_mkdir_existing_no_p(self):
-        r = run_in_shell("mkdir /tmp && mkdir /tmp")
+        # /tmp always exists; mkdir without -p must report "File exists"
+        r = run_in_shell("mkdir /tmp")
         assert r.returncode == 0
         assert "File exists" in r.stdout
 
     def test_cp_file(self):
-        r = run_in_shell(
-            "echo hello > /tmp/spack_lite_src.txt"
-            " && cp /tmp/spack_lite_src.txt /tmp/spack_lite_dst.txt"
-            " && cat /tmp/spack_lite_dst.txt"
-            " && rm /tmp/spack_lite_src.txt /tmp/spack_lite_dst.txt"
-        )
-        # echo redirection is not supported by the shell; just check cp doesn't crash
-        assert r.returncode == 0
+        # Create source file via Python (the shell has no I/O redirection)
+        src = "/tmp/spack_lite_src.txt"
+        dst = "/tmp/spack_lite_dst.txt"
+        try:
+            with open(src, "w") as fh:
+                fh.write("hello from cp test\n")
+            r_cp = run_in_shell(f"cp {src} {dst}")
+            assert r_cp.returncode == 0
+            assert r_cp.stdout == ""  # cp produces no output on success
+            r_cat = run_in_shell(f"cat {dst}")
+            assert "hello from cp test" in r_cat.stdout
+        finally:
+            for path in (src, dst):
+                try:
+                    os.remove(path)
+                except FileNotFoundError:
+                    pass
 
     def test_mv_file(self):
-        r = run_in_shell("mkdir -p /tmp/spack_lite_mv_test && mv /tmp/spack_lite_mv_test /tmp/spack_lite_mv_done && ls /tmp | grep spack_lite_mv_done && rm -rf /tmp/spack_lite_mv_done")
+        run_in_shell("mkdir -p /tmp/spack_lite_mv_test")
+        r = run_in_shell("mv /tmp/spack_lite_mv_test /tmp/spack_lite_mv_done")
         assert r.returncode == 0
-        assert "spack_lite_mv_done" in r.stdout
+        assert r.stdout == ""  # mv produces no output on success
+        r_ls = run_in_shell("ls /tmp | grep spack_lite_mv_done")
+        assert "spack_lite_mv_done" in r_ls.stdout
+        run_in_shell("rm -rf /tmp/spack_lite_mv_done")
 
 
 class TestCat:

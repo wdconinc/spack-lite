@@ -17,7 +17,7 @@ jobs:
     env:
       # Spack branch/tag to clone for testing (same default as deploy.yml)
       SPACK_VERSION: develop
-      # Where the Spack clone (including lib/spack/tests/) will live
+      # Where the Spack clone (including lib/spack/spack/test/) will live
       SPACK_ROOT: /tmp/spack-src
 
     steps:

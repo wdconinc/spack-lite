@@ -2,7 +2,7 @@
 test_spack_unit_test.py — tests that run ``spack unit-test`` inside the
 simulated Pyodide shell environment.
 
-These tests require a full Spack source tree (with the lib/spack/tests/
+These tests require a full Spack source tree (with the lib/spack/spack/test/
 directory present).  They are automatically skipped when the tree is absent.
 Set the SPACK_ROOT environment variable to point at a Spack clone before
 running, e.g.:
@@ -14,7 +14,7 @@ always set there.
 
 Design
 ------
-* Every call goes through run_in_shell() in conftest.py, which spawns a
+* Every call goes through run_in_shell() in helpers.py, which spawns a
   fresh subprocess running pyodide_runner.py.  This isolates the
   subprocess mock (installed by shim_system.py) from pytest's own
   process management.
@@ -25,6 +25,7 @@ Design
 """
 
 import os
+import re
 
 import pytest
 from helpers import run_in_shell
@@ -88,9 +89,10 @@ class TestSpackUnitTestCollect:
             extra_env={"SPACK_ROOT": spack_root},
         )
         combined = r.stdout + r.stderr
-        # pytest --collect-only prints collected items or "no tests ran"
-        assert any(kw in combined.lower() for kw in ("test_", "selected", "collected", "no tests ran")), (
-            f"Unexpected output from --collect-only:\n{combined}"
+        # pytest --collect-only -q prints one "path::test_name" line per test.
+        # Require at least one collected item so "no tests ran" is a failure.
+        assert re.search(r"::\w+", combined), (
+            f"Expected at least one collected test item in --collect-only output:\n{combined}"
         )
 
 
@@ -105,32 +107,28 @@ class TestSpackUnitTestRun:
     def test_version_tests(self, spack_root):
         """Run versions.py — pure-Python version-comparison logic.
 
-        The ``test_versions_from_git`` case is excluded because it relies on
-        specific ``git --version`` output that the subprocess mock returns in a
-        format spack does not expect to see embedded in a spec string.  All
-        other version-comparison tests run cleanly in the shimmed environment.
+        Git-related test cases are excluded because they require either real
+        ``git`` subprocess output or on-disk git repositories, neither of
+        which is available in the mock environment.  All non-git version
+        tests run cleanly in the shimmed environment.
         """
         if not _spack_test_file_present(spack_root, _VERSION_TEST):
             pytest.skip(f"{_VERSION_TEST} not present in {spack_root!r}")
 
         r = run_in_shell(
             f"spack unit-test {_VERSION_TEST} -q --tb=short"
-            " -k 'not test_versions_from_git'",
+            " -k 'not git'",
             timeout=300,
             extra_env={"SPACK_ROOT": spack_root},
         )
         combined = r.stdout + r.stderr
-        # pytest always prints a summary line containing "passed", "failed",
-        # or "error".  Accept any outcome — the important thing is that the
-        # test infrastructure runs without crashing.
-        assert any(kw in combined.lower() for kw in ("passed", "failed", "error", "no tests ran")), (
-            f"pytest did not produce a recognisable summary.\n"
+        # Require a "N passed" summary and reject any failures or errors.
+        assert re.search(r"\d+ passed", combined), (
+            f"Expected at least one passing test in pytest summary.\n"
             f"stdout:\n{r.stdout}\nstderr:\n{r.stderr}"
         )
-        # Fail the test only if pytest itself crashed (no summary at all and
-        # a non-zero exit code from the runner process).
-        if r.returncode != 0 and not any(kw in combined.lower() for kw in ("passed", "failed")):
-            pytest.fail(
-                f"spack unit-test crashed (exit {r.returncode}).\n"
-                f"stdout:\n{r.stdout}\nstderr:\n{r.stderr}"
-            )
+        failures = re.search(r"\d+ (failed|error)", combined)
+        assert not failures, (
+            f"Tests had unexpected failures or errors: {failures.group()!r}\n"
+            f"stdout:\n{r.stdout}\nstderr:\n{r.stderr}"
+        )

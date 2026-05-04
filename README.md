@@ -8,11 +8,37 @@ Python) and an [xterm.js](https://xtermjs.org/) terminal emulator.
 
 ## Features
 
+### Spack commands
+
 | Command | Description |
 |---|---|
 | `spack list [query]` | List available packages (optionally filtered) |
 | `spack info <pkg>` | Show package metadata, variants, and dependencies |
 | `spack spec <spec>` | Concretize a spec and display the dependency tree |
+
+### Built-in shell commands
+
+| Command | Description |
+|---|---|
+| `ls [-la] [path]` | List directory contents |
+| `cd [path]` | Change directory (`~` supported) |
+| `pwd` | Print working directory |
+| `cat <file>` | Print file contents |
+| `echo <text>` | Print text |
+| `head [-n N] [file]` | Print first N lines (default 10) |
+| `tail [-n N] [file]` | Print last N lines (default 10) |
+| `grep [-inv] <pat> [file]` | Search for pattern |
+| `mkdir [-p] <path>` | Create directory |
+| `rm [-rf] <path>` | Remove file or directory |
+| `cp [-r] <src> <dst>` | Copy file or directory |
+| `mv <src> <dst>` | Move file or directory |
+| `env` | Show environment variables |
+| `which <cmd>` | Locate a command or built-in |
+| `find [path] [-name pat] [-type f\|d]` | Find files |
+| `help` | Show available commands |
+| `clear` | Clear the terminal |
+
+Commands can be chained with pipes (`\|`) and support `$VAR` / `${VAR}` expansion.
 
 ---
 
@@ -24,6 +50,7 @@ Browser Tab
 └── worker.js           ← Web Worker
     ├── Pyodide         ← WebAssembly Python runtime
     ├── shim_system.py  ← "System lie": patches subprocess / os / platform
+    ├── shell.py        ← Python-backed POSIX shell (ls, cd, cat, grep, …)
     ├── ~/.spack/       ← Injected compiler + package config
     └── /home/pyodide/spack/   ← spack-lite.tar.gz unpacked into MEMFS
 ```
@@ -75,11 +102,13 @@ python3 -m http.server 8080
 Once the status badge turns green (**Ready**), type commands:
 
 ```
-spack-lite $ spack list
-spack-lite $ spack info zlib
-spack-lite $ spack spec zlib+shared
-spack-lite $ help
-spack-lite $ clear
+spack-lite:~$ spack list
+spack-lite:~$ spack info zlib
+spack-lite:~$ spack spec zlib+shared
+spack-lite:~$ ls /home/pyodide/spack/lib/spack | head -20
+spack-lite:~$ cat /home/pyodide/spack/var/spack/repos/builtin/packages/zlib/package.py
+spack-lite:~$ help
+spack-lite:~$ clear
 ```
 
 ---
@@ -90,6 +119,7 @@ spack-lite $ clear
 spack-lite/
 ├── index.html              ← Main page (xterm.js terminal UI)
 ├── worker.js               ← Pyodide Web Worker
+├── shell.py                ← Python-backed POSIX shell interpreter
 ├── shim_system.py          ← Subprocess / platform / os monkey-patches
 ├── spack_config/
 │   ├── compilers.yaml      ← Fake GCC 11 compiler definition
@@ -118,6 +148,30 @@ and locks the target microarchitecture to `x86_64`.
 
 Disables checksum verification and SSL (unnecessary for a static demo), and sets
 `concretizer: clingo`.
+
+---
+
+## Shell Design (`shell.py`)
+
+`shell.py` implements a Python-backed POSIX-like shell that handles all
+non-`spack` commands.  It is loaded by the Web Worker after `shim_system.py`
+and exposes a single public function:
+
+```python
+result_json = run_shell_command(line)  # returns {"output": "...", "cwd": "..."}
+```
+
+Key design points:
+
+- **Pipeline support** — commands are split on unquoted `|` characters; each
+  stage's stdout becomes the next stage's stdin.
+- **Variable expansion** — `$VAR` and `${VAR}` are expanded from `os.environ`
+  before each token is evaluated.
+- **`spack` routing** — the `spack` built-in delegates to `spack.main.SpackCommand`,
+  capturing stdout/stderr in a buffer so the output flows through the shell's
+  normal result path.
+- **CWD tracking** — `run_shell_command` returns the updated current working
+  directory after each command so the terminal prompt stays accurate.
 
 ---
 
@@ -169,6 +223,12 @@ SPACK_VERSION=develop bash scripts/make_spack_lite.sh
 
 Edit `shim_system.py`.  The worker fetches it at runtime via `fetch('shim_system.py')`,
 so a browser reload picks up changes immediately (no rebuild needed).
+
+### Adding or modifying shell commands
+
+Edit `shell.py`.  Like `shim_system.py`, it is fetched at runtime, so a
+browser reload is sufficient.  Add a new `_cmd_<name>` function and register
+it in the `_BUILTINS` dictionary at the bottom of the file.
 
 ---
 

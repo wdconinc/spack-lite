@@ -58,6 +58,7 @@ import sys
 import os
 import platform
 import collections
+import json as _json
 
 # ---------------------------------------------------------------------------
 # 1.  Platform identity — make Spack detect "Linux x86_64"
@@ -147,13 +148,12 @@ def _build_mock_result(args=None, **kwargs):
         # `git clone` it also bridges the cloned tree into Pyodide's MEMFS.
         # Fall back to mock responses when wasm-git is not loaded (e.g. CDN
         # unreachable) so that read-only spack commands still work.
-        git_args = list(args) if isinstance(args, (list, tuple)) else str(args or "").split()
+        git_args = list(args) if isinstance(args, (list, tuple)) else __import__("shlex").split(str(args or ""))
         # Strip the 'git' executable name — wasm-git's callMain is git itself.
         if git_args and git_args[0] == "git":
             git_args = git_args[1:]
         _wasm_stdout = None
         try:
-            import json as _json
             import js as _js
             if hasattr(_js, "gitCall"):
                 _wasm_stdout = _js.gitCall(_json.dumps(git_args))

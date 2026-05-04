@@ -198,14 +198,17 @@ async function init() {
       self.gitCall = function gitCall(argsJson) {
         const args = JSON.parse(argsJson);
         const isClone = args[0] === 'clone';
+        // A clone with a destination path requires at least 3 args:
+        //   ['clone', '<url>', '<destPath>']
+        // When only the URL is given git infers the destination from it;
+        // in that case we cannot pre-create dirs or bridge the FS, so we
+        // only activate FS bridging when an explicit destination is present.
+        const destPath = isClone && args.length >= 3 ? args[args.length - 1] : null;
+        const parentDir = destPath ? destPath.substring(0, destPath.lastIndexOf('/')) : null;
 
         // For clone, ensure the destination's parent directory exists in
         // wasm-git's FS before git tries to create the repo directory.
-        if (isClone && args.length >= 2) {
-          const destPath = args[args.length - 1];
-          const parentDir = destPath.substring(0, destPath.lastIndexOf('/'));
-          if (parentDir) _mkdirp(lg.FS, parentDir);
-        }
+        if (parentDir) _mkdirp(lg.FS, parentDir);
 
         _gitOutputLines = []; // reset capture buffer for this call
         try {
@@ -215,16 +218,20 @@ async function init() {
         }
         const out = _gitOutputLines.join('\n') + (_gitOutputLines.length ? '\n' : '');
 
-        // After a successful clone, bridge the cloned tree from wasm-git's
-        // MEMFS into Pyodide's MEMFS so Python / spack can read the files.
-        if (isClone && args.length >= 2) {
-          const destPath = args[args.length - 1];
-          const parentDir = destPath.substring(0, destPath.lastIndexOf('/'));
-          if (parentDir) _mkdirp(pyodide.FS, parentDir);
-          try {
-            _copyTree(lg.FS, destPath, pyodide.FS, destPath);
-          } catch (e) {
-            console.warn('wasm-git: FS bridge failed after clone:', e);
+        // After clone, bridge the cloned tree from wasm-git's MEMFS into
+        // Pyodide's MEMFS so Python / spack can read the files.
+        // Only attempt the copy when an explicit destination was given AND
+        // the directory actually exists in wasm-git's FS (i.e. clone worked).
+        if (destPath !== null) {
+          let cloneSucceeded = false;
+          try { cloneSucceeded = lg.FS.isDir(lg.FS.stat(destPath).mode); } catch (e) { /* ignore */ }
+          if (cloneSucceeded) {
+            if (parentDir) _mkdirp(pyodide.FS, parentDir);
+            try {
+              _copyTree(lg.FS, destPath, pyodide.FS, destPath);
+            } catch (e) {
+              console.warn('wasm-git: FS bridge failed after clone:', e);
+            }
           }
         }
 

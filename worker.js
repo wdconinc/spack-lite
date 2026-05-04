@@ -359,6 +359,121 @@ except ImportError:
     _termios.tcflush    = lambda fd, queue: None
     _termios.tcflow     = lambda fd, action: None
     sys.modules['termios'] = _termios
+
+# --- ssl shim (unvendored from Pyodide stdlib) ---
+try:
+    import ssl
+except ImportError:
+    import types as _types
+    _ssl = _types.ModuleType('ssl')
+    class _SSLError(OSError): pass
+    class _SSLEOFError(_SSLError): pass
+    class _SSLWantReadError(_SSLError): pass
+    class _SSLWantWriteError(_SSLError): pass
+    class _CertificateError(ValueError): pass
+    _ssl.SSLError = _SSLError
+    _ssl.SSLEOFError = _SSLEOFError
+    _ssl.SSLWantReadError = _SSLWantReadError
+    _ssl.SSLWantWriteError = _SSLWantWriteError
+    _ssl.CertificateError = _CertificateError
+    _ssl.PROTOCOL_TLS = 2
+    _ssl.PROTOCOL_TLS_CLIENT = 16
+    _ssl.PROTOCOL_TLS_SERVER = 17
+    _ssl.PROTOCOL_SSLv23 = 2
+    _ssl.CERT_NONE = 0
+    _ssl.CERT_OPTIONAL = 1
+    _ssl.CERT_REQUIRED = 2
+    _ssl.OP_ALL = 0x80000054
+    _ssl.OP_NO_SSLv2 = 0x01000000
+    _ssl.OP_NO_SSLv3 = 0x02000000
+    _ssl.OP_NO_TLSv1 = 0x04000000
+    _ssl.OP_NO_TLSv1_1 = 0x10000000
+    _ssl.OP_NO_TLSv1_2 = 0x20000000
+    _ssl.OP_NO_COMPRESSION = 0x00020000
+    class _Purpose:
+        SERVER_AUTH = object()
+        CLIENT_AUTH = object()
+    _ssl.Purpose = _Purpose
+    class _SSLContext:
+        def __init__(self, protocol=None):
+            self.check_hostname = False
+            self.verify_mode = _ssl.CERT_NONE
+            self.options = _ssl.OP_ALL
+        def load_verify_locations(self, cafile=None, capath=None, cadata=None): pass
+        def load_cert_chain(self, certfile, keyfile=None, password=None): pass
+        def set_default_verify_paths(self): pass
+        def set_ciphers(self, ciphers): pass
+        def wrap_socket(self, sock, server_side=False, do_handshake_on_connect=True,
+                        suppress_ragged_eofs=True, server_hostname=None):
+            raise _SSLError('SSL wrapping is not supported in the Pyodide WebAssembly environment')
+    _ssl.SSLContext = _SSLContext
+    def _create_default_context(purpose=None, *, cafile=None, capath=None, cadata=None):
+        return _SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+    _ssl.create_default_context = _create_default_context
+    _ssl._create_default_https_context = _create_default_context
+    _ssl._create_unverified_context = _create_default_context
+    def _wrap_socket(sock, keyfile=None, certfile=None, server_side=False,
+                     cert_reqs=None, ssl_version=None, ca_certs=None,
+                     do_handshake_on_connect=True, suppress_ragged_eofs=True, ciphers=None):
+        raise _SSLError('SSL wrapping is not supported in the Pyodide WebAssembly environment')
+    _ssl.wrap_socket = _wrap_socket
+    sys.modules['ssl'] = _ssl
+
+# --- lzma shim (unvendored from Pyodide stdlib) ---
+try:
+    import lzma
+except ImportError:
+    import types as _types
+    _lzma = _types.ModuleType('lzma')
+    class _LZMAError(Exception): pass
+    _lzma.LZMAError = _LZMAError
+    _lzma.FORMAT_AUTO = 0
+    _lzma.FORMAT_XZ = 1
+    _lzma.FORMAT_ALONE = 2
+    _lzma.FORMAT_RAW = 3
+    _lzma.CHECK_NONE = 0
+    _lzma.CHECK_CRC32 = 1
+    _lzma.CHECK_CRC64 = 4
+    _lzma.CHECK_SHA256 = 10
+    _lzma.CHECK_ID_MAX = 15
+    _lzma.CHECK_UNKNOWN = 16
+    _lzma.FILTER_LZMA1 = 0x09300e5a
+    _lzma.FILTER_LZMA2 = 0x21
+    _lzma.FILTER_DELTA = 0x03
+    _lzma.FILTER_X86 = 0x04
+    _lzma.FILTER_IA64 = 0x06
+    _lzma.FILTER_ARM = 0x07
+    _lzma.FILTER_ARMTHUMB = 0x08
+    _lzma.FILTER_SPARC = 0x09
+    _lzma.FILTER_POWERPC = 0x05
+    _lzma.PRESET_DEFAULT = 6
+    _lzma.PRESET_EXTREME = (1 << 31)
+    _lzma.MODE_FAST = 1
+    _lzma.MODE_NORMAL = 2
+    _lzma.MF_HC3 = 3
+    _lzma.MF_HC4 = 4
+    _lzma.MF_BT2 = 18
+    _lzma.MF_BT3 = 19
+    _lzma.MF_BT4 = 20
+    _LZMA_MSG = 'lzma compression is not available in the Pyodide WebAssembly environment'
+    def _lzma_compress(data, format=_lzma.FORMAT_XZ, check=-1, preset=None, filters=None):
+        raise _LZMAError(_LZMA_MSG)
+    def _lzma_decompress(data, format=_lzma.FORMAT_AUTO, memlimit=None, filters=None):
+        raise _LZMAError(_LZMA_MSG)
+    _lzma.compress = _lzma_compress
+    _lzma.decompress = _lzma_decompress
+    class _LZMAFile:
+        def __init__(self, *a, **kw): raise _LZMAError(_LZMA_MSG)
+    class _LZMACompressor:
+        def __init__(self, *a, **kw): raise _LZMAError(_LZMA_MSG)
+    class _LZMADecompressor:
+        def __init__(self, *a, **kw): raise _LZMAError(_LZMA_MSG)
+    _lzma.LZMAFile = _LZMAFile
+    _lzma.LZMACompressor = _LZMACompressor
+    _lzma.LZMADecompressor = _LZMADecompressor
+    def _lzma_open(*a, **kw): raise _LZMAError(_LZMA_MSG)
+    _lzma.open = _lzma_open
+    sys.modules['lzma'] = _lzma
 `;
 
 // ---------------------------------------------------------------------------

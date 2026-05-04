@@ -272,11 +272,23 @@ except ImportError:
     _fcntl.F_SETFL = 4
     _fcntl.FD_CLOEXEC = 1
 
-    # No-op implementations — file locking is meaningless in a single-threaded
-    # browser sandbox where concurrent access cannot occur.
+    import errno as _errno
+
+    # File-locking calls are no-ops — locking is meaningless in a
+    # single-threaded browser sandbox where concurrent access cannot occur.
     _fcntl.flock = lambda fd, operation: None
-    _fcntl.fcntl = lambda fd, cmd, arg=0: 0
-    _fcntl.ioctl = lambda fd, request, arg=0, mutate_flag=True: 0
     _fcntl.lockf = lambda fd, cmd, len=0, start=0, whence=0: None
+
+    # fcntl() and ioctl() cannot be meaningfully implemented in a WASM
+    # sandbox.  Raise an explicit OSError so callers know the operation
+    # failed rather than silently continuing with bogus flag / buffer data.
+    def _fcntl_stub(fd, cmd, arg=0):
+        raise OSError(_errno.ENOSYS, "Function not implemented")
+
+    def _ioctl_stub(fd, request, arg=0, mutate_flag=True):
+        raise OSError(_errno.ENOTTY, "Inappropriate ioctl for device")
+
+    _fcntl.fcntl = _fcntl_stub
+    _fcntl.ioctl = _ioctl_stub
 
     sys.modules["fcntl"] = _fcntl

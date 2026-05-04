@@ -294,9 +294,14 @@ except ImportError:
     _fcntl.F_SETFL = 4
     _fcntl.FD_CLOEXEC = 1
     _fcntl.flock = lambda fd, op: None
-    _fcntl.fcntl = lambda fd, cmd, arg=0: 0
-    _fcntl.ioctl = lambda fd, req, arg=0, mutate_flag=True: 0
     _fcntl.lockf = lambda fd, cmd, len=0, start=0, whence=0: None
+    import errno as _errno
+    def _fcntl_stub(fd, cmd, arg=0):
+        raise OSError(_errno.ENOSYS, 'Function not implemented')
+    def _ioctl_stub(fd, req, arg=0, mutate_flag=True):
+        raise OSError(_errno.ENOTTY, 'Inappropriate ioctl for device')
+    _fcntl.fcntl = _fcntl_stub
+    _fcntl.ioctl = _ioctl_stub
     sys.modules['fcntl'] = _fcntl
 `;
 

@@ -455,7 +455,7 @@ except ImportError:
     _lzma.MF_BT2 = 18
     _lzma.MF_BT3 = 19
     _lzma.MF_BT4 = 20
-    _LZMA_MSG = 'lzma is not available in the Pyodide WebAssembly environment'
+    _LZMA_MSG = 'lzma compression is not available in the Pyodide WebAssembly environment'
     def _lzma_compress(data, format=1, check=-1, preset=None, filters=None):
         raise _LZMAError(_LZMA_MSG)
     def _lzma_decompress(data, format=0, memlimit=None, filters=None):
@@ -471,7 +471,8 @@ except ImportError:
     _lzma.LZMAFile = _LZMAFile
     _lzma.LZMACompressor = _LZMACompressor
     _lzma.LZMADecompressor = _LZMADecompressor
-    _lzma.open = lambda *a, **kw: (_ for _ in ()).throw(_LZMAError(_LZMA_MSG))
+    def _lzma_open(*a, **kw): raise _LZMAError(_LZMA_MSG)
+    _lzma.open = _lzma_open
     sys.modules['lzma'] = _lzma
 `;
 

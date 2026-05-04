@@ -543,14 +543,14 @@ except ImportError:
 
     _LZMA_UNAVAILABLE = "lzma compression is not available in the Pyodide WebAssembly environment"
 
-    def _compress(data, format=_lzma.FORMAT_XZ, check=-1, preset=None, filters=None):
+    def compress(data, format=_lzma.FORMAT_XZ, check=-1, preset=None, filters=None):
         raise _LZMAError(_LZMA_UNAVAILABLE)
 
-    def _decompress(data, format=_lzma.FORMAT_AUTO, memlimit=None, filters=None):
+    def decompress(data, format=_lzma.FORMAT_AUTO, memlimit=None, filters=None):
         raise _LZMAError(_LZMA_UNAVAILABLE)
 
-    _lzma.compress = _compress
-    _lzma.decompress = _decompress
+    _lzma.compress = compress
+    _lzma.decompress = decompress
 
     class _LZMAFile:
         def __init__(self, *args, **kwargs):
@@ -568,9 +568,9 @@ except ImportError:
     _lzma.LZMACompressor = _LZMACompressor
     _lzma.LZMADecompressor = _LZMADecompressor
 
-    def _lzma_open(*args, **kwargs):
+    def open(*args, **kwargs):  # noqa: A001 — shadows builtin only within this scope
         raise _LZMAError(_LZMA_UNAVAILABLE)
 
-    _lzma.open = _lzma_open
+    _lzma.open = open
 
     sys.modules["lzma"] = _lzma

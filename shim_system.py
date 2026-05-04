@@ -250,3 +250,33 @@ except ImportError:
     _pwd.getpwuid = lambda uid: _pwdstruct()
     _pwd.getpwall = lambda: [_pwdstruct()]
     sys.modules["pwd"] = _pwd
+
+# ---------------------------------------------------------------------------
+# 6.  Patch fcntl module (removed from Pyodide due to browser limitations)
+# ---------------------------------------------------------------------------
+try:
+    import fcntl  # noqa: F401
+except ImportError:
+    import types
+
+    _fcntl = types.ModuleType("fcntl")
+
+    # Common constants used for file locking / descriptor flags
+    _fcntl.LOCK_SH = 1
+    _fcntl.LOCK_EX = 2
+    _fcntl.LOCK_NB = 4
+    _fcntl.LOCK_UN = 8
+    _fcntl.F_GETFD = 1
+    _fcntl.F_SETFD = 2
+    _fcntl.F_GETFL = 3
+    _fcntl.F_SETFL = 4
+    _fcntl.FD_CLOEXEC = 1
+
+    # No-op implementations — file locking is meaningless in a single-threaded
+    # browser sandbox where concurrent access cannot occur.
+    _fcntl.flock = lambda fd, operation: None
+    _fcntl.fcntl = lambda fd, cmd, arg=0: 0
+    _fcntl.ioctl = lambda fd, request, arg=0, mutate_flag=True: 0
+    _fcntl.lockf = lambda fd, cmd, len=0, start=0, whence=0: None
+
+    sys.modules["fcntl"] = _fcntl

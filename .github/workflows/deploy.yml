@@ -28,8 +28,8 @@ jobs:
 
       - name: Build spack-lite.tar.gz
         env:
-          # Pin the Spack version for reproducible builds
-          SPACK_VERSION: v0.21.0
+          # Use the Spack develop branch
+          SPACK_VERSION: develop
         run: bash scripts/make_spack_lite.sh
 
       - name: Assemble site artefacts

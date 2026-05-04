@@ -49,7 +49,7 @@ KEEP_PKGS=(
   xz zlib zstd
 )
 
-SPACK_VERSION="${SPACK_VERSION:-v0.21.0}"
+SPACK_VERSION="${SPACK_VERSION:-develop}"
 
 # ---------------------------------------------------------------------------
 log() { echo "[make_spack_lite] $*"; }

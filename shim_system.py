@@ -6,13 +6,40 @@ believes it is running on a standard Linux/x86_64 host even though the
 actual runtime is a Pyodide/Emscripten WebAssembly environment inside a
 browser where fork(2), exec(2), and most POSIX syscalls are unavailable.
 
-Load this module *before* importing any Spack code:
+Modules patched
+---------------
+1.  os / platform   — fake Linux x86_64 uname / machine / system identity
+2.  subprocess      — all shell-out calls return canned mock responses
+3.  os.environ      — sane default environment variables
+4.  filesystem      — required ~/.spack directory tree created up front
+5.  grp / pwd       — group and password database stubs
+6.  termios         — terminal-attribute constants and no-op control functions
+7.  tty             — setraw / setcbreak no-ops (wraps termios)
+8.  readline        — tab-completion stubs (used by `spack python`)
+9.  fcntl           — file-locking no-ops; fcntl/ioctl raise ENOSYS/ENOTTY
+10. ssl             — stub context / wrap_socket (browser handles TLS at JS layer)
+11. lzma            — raises LZMAError on use (no WASM lzma available by default)
 
-    exec(open('shim_system.py').read())
+This file is the **single canonical source** for all Pyodide compatibility
+shims.  worker.js fetches it over HTTP and executes it at start-up; there
+is no separate inline fallback.
 
-or, in a Pyodide worker:
+Usage
+-----
+In the Web Worker (worker.js, the normal path):
 
-    pyodide.runPythonAsync(open('shim_system.py').read())
+    const resp = await fetch('shim_system.py');
+    if (!resp.ok) throw new Error(`Failed to fetch shim_system.py (HTTP ${resp.status})`);
+    await pyodide.runPythonAsync(await resp.text());
+
+The file must be served from the same origin as index.html / worker.js.
+It is **not** written into the Pyodide MEMFS, so ``open('shim_system.py')``
+will not work inside Python — always pass the source text directly to
+``runPythonAsync``.
+
+For local testing outside Pyodide (standard CPython):
+
+    exec(compile(open('/path/to/shim_system.py').read(), 'shim_system.py', 'exec'))
 """
 
 import sys
@@ -280,7 +307,124 @@ except ImportError:
     sys.modules["pwd"] = _pwd
 
 # ---------------------------------------------------------------------------
-# 6.  Patch fcntl module (removed from Pyodide due to browser limitations)
+# 6.  Patch termios module (removed from Pyodide — no real TTY in a browser)
+# ---------------------------------------------------------------------------
+# termios is used in spack/new_installer.py (unguarded) and
+# spack/llnl/util/tty/log.py (already guarded with try/except).
+# The shim exposes the constants and no-op functions needed for import to
+# succeed; actual terminal-control calls are silently ignored.
+try:
+    import termios  # noqa: F401
+except ImportError:
+    import types
+
+    _termios = types.ModuleType("termios")
+
+    # tcsetattr 'when' constants
+    _termios.TCSANOW = 0
+    _termios.TCSADRAIN = 1
+    _termios.TCSAFLUSH = 2
+    _termios.TCSASOFT = 16  # BSD/macOS extension; harmless to define
+
+    # lflag bits used by Spack (cfg[3])
+    _termios.ICANON = 2
+    _termios.ECHO = 8
+    _termios.ECHOE = 16
+    _termios.ECHOK = 32
+    _termios.ECHONL = 64
+    _termios.ISIG = 1
+    _termios.NOFLSH = 128
+    _termios.TOSTOP = 256
+
+    # iflag bits
+    _termios.BRKINT = 2
+    _termios.ICRNL = 256
+    _termios.IXON = 1024
+    _termios.IXOFF = 4096
+
+    # oflag bits
+    _termios.OPOST = 1
+
+    # cflag bits / speeds
+    _termios.B9600 = 13
+    _termios.CS8 = 48
+    _termios.CREAD = 128
+    _termios.CLOCAL = 2048
+
+    # Return a dummy attribute list: [iflag, oflag, cflag, lflag, ispeed, ospeed, cc]
+    # lflag = 0 means no flags are set (ICANON and ECHO are disabled because their
+    # bit values are not set in lflag), which is the safe-for-browser default.
+    _termios.tcgetattr = lambda fd: [0, 0, 0, 0, 0, 0, [0] * 32]
+    _termios.tcsetattr = lambda fd, when, attrs: None
+    _termios.tcdrain = lambda fd: None
+    _termios.tcflush = lambda fd, queue: None
+    _termios.tcflow = lambda fd, action: None
+    _termios.tcsendbreak = lambda fd, duration: None
+    _termios.tcgetpgrp = lambda fd: 1
+    _termios.tcsetpgrp = lambda fd, pg: None
+
+    sys.modules["termios"] = _termios
+
+# ---------------------------------------------------------------------------
+# 7.  Patch tty module (removed from Pyodide — wraps termios / ioctl)
+# ---------------------------------------------------------------------------
+# tty is used in spack/new_installer.py (unguarded top-level import).
+# setcbreak / setraw are no-ops because there is no real terminal.
+try:
+    import tty  # noqa: F401
+except ImportError:
+    import types
+
+    _tty = types.ModuleType("tty")
+
+    _tty.IFLAG = 0
+    _tty.OFLAG = 1
+    _tty.CFLAG = 2
+    _tty.LFLAG = 3
+    _tty.ISPEED = 4
+    _tty.OSPEED = 5
+    _tty.CC = 6
+
+    _tty.setraw = lambda fd, when=None: None
+    _tty.setcbreak = lambda fd, when=None: None
+
+    sys.modules["tty"] = _tty
+
+# ---------------------------------------------------------------------------
+# 8.  Patch readline module (removed from Pyodide — GNU readline not present)
+# ---------------------------------------------------------------------------
+# spack/cmd/python.py pushes "import readline" into a code.InteractiveConsole
+# so the import happens at run-time, not module-load time.  The shim prevents
+# an ImportError from bubbling up if 'spack python' is ever invoked.
+try:
+    import readline  # noqa: F401
+except ImportError:
+    import types
+
+    _readline = types.ModuleType("readline")
+
+    _readline.get_completer = lambda: None
+    _readline.set_completer = lambda fn=None: None
+    _readline.parse_and_bind = lambda s: None
+    _readline.read_history_file = lambda filename=None: None
+    _readline.write_history_file = lambda filename=None: None
+    _readline.get_history_length = lambda: 0
+    _readline.set_history_length = lambda n: None
+    _readline.clear_history = lambda: None
+    _readline.get_current_history_length = lambda: 0
+    _readline.get_history_item = lambda idx: None
+    _readline.remove_history_item = lambda pos: None
+    _readline.replace_history_item = lambda pos, line: None
+    _readline.redisplay = lambda: None
+    _readline.set_startup_hook = lambda fn=None: None
+    _readline.set_pre_input_hook = lambda fn=None: None
+    _readline.set_completer_delims = lambda s: None
+    _readline.get_completer_delims = lambda: " \t\n`~!@#$%^&*()-=+[{]}\\|;:'\",<>/?"
+
+    sys.modules["readline"] = _readline
+
+# ---------------------------------------------------------------------------
+# 9.  Patch fcntl module (removed from Pyodide due to browser limitations)
 # ---------------------------------------------------------------------------
 try:
     import fcntl  # noqa: F401
@@ -321,96 +465,8 @@ except ImportError:
 
     sys.modules["fcntl"] = _fcntl
 
-# ---------------------------------------------------------------------------
-# 7.  Patch termios module (removed from Pyodide due to browser limitations)
-# ---------------------------------------------------------------------------
-try:
-    import termios  # noqa: F401
-except ImportError:
-    import types
 
-    _termios = types.ModuleType("termios")
-
-    # Common input-mode flags
-    _termios.IGNBRK = 0o000001
-    _termios.BRKINT = 0o000002
-    _termios.IGNPAR = 0o000004
-    _termios.INPCK  = 0o000020
-    _termios.ISTRIP = 0o000040
-    _termios.INLCR  = 0o000100
-    _termios.IGNCR  = 0o000200
-    _termios.ICRNL  = 0o000400
-    _termios.IXON   = 0o002000
-
-    # Common output-mode flags
-    _termios.OPOST  = 0o000001
-
-    # Common control-mode flags
-    _termios.CS8    = 0o000060
-    _termios.CREAD  = 0o000200
-    _termios.CLOCAL = 0o004000
-
-    # Common local-mode flags
-    _termios.ISIG   = 0o000001
-    _termios.ICANON = 0o000002
-    _termios.ECHO   = 0o000010
-    _termios.ECHOE  = 0o000020
-    _termios.ECHOK  = 0o000040
-    _termios.ECHONL = 0o000100
-    _termios.NOFLSH = 0o000200
-    _termios.IEXTEN = 0o100000
-
-    # tcsetattr 'when' values
-    _termios.TCSANOW   = 0
-    _termios.TCSADRAIN = 1
-    _termios.TCSAFLUSH = 2
-
-    # Baud rate constants (B0–B115200 subset)
-    _termios.B0      = 0o000000
-    _termios.B9600   = 0o000015
-    _termios.B19200  = 0o000016
-    _termios.B38400  = 0o000017
-    _termios.B57600  = 0o010001
-    _termios.B115200 = 0o010002
-
-    # Special character index constants
-    _termios.VMIN  = 6
-    _termios.VTIME = 5
-
-    # Number of control characters in the cc array (matches Linux/glibc NCCS)
-    _termios.NCCS = 32
-
-    # Exception type — mirrors termios.error in the real module
-    _termios.error = OSError
-
-    # tcgetattr returns a list: [iflag, oflag, cflag, lflag, ispeed, ospeed, cc]
-    # Return a reasonable "dumb terminal" attribute list.
-    def _tcgetattr(fd):
-        cc = [b'\x00'] * _termios.NCCS
-        cc[_termios.VMIN]  = b'\x01'
-        cc[_termios.VTIME] = b'\x00'
-        return [
-            _termios.ICRNL,          # iflag
-            _termios.OPOST,          # oflag
-            _termios.CS8 | _termios.CREAD | _termios.CLOCAL,  # cflag
-            _termios.ECHO | _termios.ICANON | _termios.ISIG | _termios.IEXTEN,  # lflag
-            _termios.B9600,          # ispeed
-            _termios.B9600,          # ospeed
-            cc,                      # cc
-        ]
-
-    # tcsetattr and tcflush are no-ops — there is no real tty in the browser.
-    _termios.tcgetattr = _tcgetattr
-    _termios.tcsetattr = lambda fd, when, attrs: None
-    _termios.tcsendbreak = lambda fd, duration: None
-    _termios.tcdrain = lambda fd: None
-    _termios.tcflush = lambda fd, queue: None
-    _termios.tcflow = lambda fd, action: None
-
-    sys.modules["termios"] = _termios
-
-# ---------------------------------------------------------------------------
-# 8.  Patch ssl module (unvendored from Pyodide stdlib)
+# 10.  Patch ssl module (unvendored from Pyodide stdlib)
 #     Spack imports ssl transitively (via urllib / http.client).  We provide
 #     enough of the public API to satisfy import-time attribute lookups while
 #     keeping actual SSL connections impossible (the browser sandbox handles
@@ -516,7 +572,7 @@ except ImportError:
     sys.modules["ssl"] = _ssl
 
 # ---------------------------------------------------------------------------
-# 9.  Patch lzma module (unvendored from Pyodide stdlib)
+# 11.  Patch lzma module (unvendored from Pyodide stdlib)
 #     Spack uses lzma for .tar.xz archives.  We expose the full public API so
 #     that import-time code succeeds; actual compression/decompression raises
 #     LZMAError because no WASM lzma implementation is available by default.

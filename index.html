@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spack-Lite — Browser Terminal</title>
+
+  <!-- xterm.js -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #1e1e2e;
+      color: #cdd6f4;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    header {
+      background: #181825;
+      border-bottom: 1px solid #313244;
+      padding: 0.5rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-shrink: 0;
+    }
+
+    header h1 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #cba6f7;
+      letter-spacing: 0.05em;
+    }
+
+    #status-badge {
+      font-size: 0.75rem;
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      background: #313244;
+      color: #a6adc8;
+      transition: background 0.3s, color 0.3s;
+    }
+    #status-badge.loading  { background: #fab387; color: #1e1e2e; }
+    #status-badge.ready    { background: #a6e3a1; color: #1e1e2e; }
+    #status-badge.error    { background: #f38ba8; color: #1e1e2e; }
+
+    #terminal-wrapper {
+      flex: 1;
+      padding: 0.5rem;
+      overflow: hidden;
+    }
+
+    #terminal {
+      height: 100%;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>⚗ Spack-Lite</h1>
+  <span id="status-badge" class="loading">Loading Pyodide…</span>
+</header>
+
+<div id="terminal-wrapper">
+  <div id="terminal"></div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Terminal setup
+// ---------------------------------------------------------------------------
+const term = new Terminal({
+  theme: {
+    background:  '#1e1e2e',
+    foreground:  '#cdd6f4',
+    cursor:      '#f5c2e7',
+    black:       '#45475a',
+    red:         '#f38ba8',
+    green:       '#a6e3a1',
+    yellow:      '#f9e2af',
+    blue:        '#89b4fa',
+    magenta:     '#cba6f7',
+    cyan:        '#89dceb',
+    white:       '#bac2de',
+    brightBlack: '#585b70',
+  },
+  fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+  fontSize: 14,
+  lineHeight: 1.3,
+  cursorStyle: 'block',
+  cursorBlink: true,
+});
+const fitAddon = new FitAddon.FitAddon();
+term.loadAddon(fitAddon);
+term.open(document.getElementById('terminal'));
+fitAddon.fit();
+window.addEventListener('resize', () => fitAddon.fit());
+
+// ---------------------------------------------------------------------------
+// Input line editor (simple, single-line)
+// ---------------------------------------------------------------------------
+let inputBuffer = '';
+let inputEnabled = false;
+let resolveInput = null;
+
+function enableInput() {
+  inputEnabled = true;
+}
+
+function disableInput() {
+  inputEnabled = false;
+}
+
+term.onKey(({ key, domEvent }) => {
+  if (!inputEnabled) return;
+
+  const code = domEvent.keyCode;
+  if (code === 13) {                 // Enter
+    term.write('\r\n');
+    const line = inputBuffer;
+    inputBuffer = '';
+    if (resolveInput) {
+      resolveInput(line);
+      resolveInput = null;
+    }
+  } else if (code === 8) {           // Backspace
+    if (inputBuffer.length > 0) {
+      inputBuffer = inputBuffer.slice(0, -1);
+      term.write('\b \b');
+    }
+  } else if (key >= ' ' && key.length === 1) {
+    inputBuffer += key;
+    term.write(key);
+  }
+});
+
+function readLine() {
+  return new Promise(resolve => { resolveInput = resolve; });
+}
+
+// ---------------------------------------------------------------------------
+// Web Worker
+// ---------------------------------------------------------------------------
+const worker = new Worker('worker.js');
+const badge  = document.getElementById('status-badge');
+
+let pendingResolve = null;
+let pendingReject  = null;
+
+worker.onmessage = ({ data }) => {
+  switch (data.type) {
+    case 'status':
+      badge.className = data.state;
+      badge.textContent = data.message;
+      if (data.state === 'ready') startREPL();
+      if (data.state === 'error') {
+        term.write('\r\n\x1b[31m' + data.message + '\x1b[0m\r\n');
+      }
+      break;
+
+    case 'stdout':
+      // Convert LF → CR+LF for xterm.js
+      term.write(data.text.replace(/\n/g, '\r\n'));
+      break;
+
+    case 'result':
+      if (pendingResolve) { pendingResolve(data); pendingResolve = null; }
+      break;
+
+    case 'error':
+      if (pendingReject) { pendingReject(data.message); pendingReject = null; }
+      else term.write('\r\n\x1b[31mError: ' + data.message + '\x1b[0m\r\n');
+      break;
+
+    default:
+      console.warn('Unknown worker message', data);
+  }
+};
+
+function runCommand(cmdStr) {
+  return new Promise((resolve, reject) => {
+    pendingResolve = resolve;
+    pendingReject  = reject;
+    worker.postMessage({ type: 'run', command: cmdStr });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// REPL
+// ---------------------------------------------------------------------------
+const PROMPT = '\x1b[32mspack-lite\x1b[0m \x1b[34m$\x1b[0m ';
+
+const HELP_TEXT = `
+\x1b[33mAvailable commands:\x1b[0m
+  spack list [<query>]        — list available packages
+  spack info <package>        — show package metadata
+  spack spec <spec>           — concretize a spec
+  help                        — show this help
+  clear                       — clear the terminal
+
+\x1b[2mTip: try  spack spec zlib+shared\x1b[0m
+`;
+
+async function startREPL() {
+  term.write('\r\n\x1b[1m\x1b[35m⚗ Spack-Lite\x1b[0m  —  Spack inside your browser via Pyodide\r\n');
+  term.write(HELP_TEXT.replace(/\n/g, '\r\n'));
+
+  enableInput();
+
+  while (true) {
+    term.write(PROMPT);
+    const line = (await readLine()).trim();
+    if (!line) continue;
+
+    if (line === 'clear') { term.clear(); continue; }
+    if (line === 'help')  { term.write(HELP_TEXT.replace(/\n/g, '\r\n')); continue; }
+
+    // Send to worker
+    disableInput();
+    try {
+      const result = await runCommand(line);
+      if (result.output) {
+        term.write(result.output.replace(/\n/g, '\r\n'));
+      }
+    } catch (err) {
+      term.write('\x1b[31mError: ' + err + '\x1b[0m\r\n');
+    }
+    enableInput();
+  }
+}
+</script>
+</body>
+</html>

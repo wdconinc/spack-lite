@@ -1,0 +1,7 @@
+packages:
+  all:
+    target: [x86_64]
+    providers:
+      mpi: [openmpi]
+      blas: [openblas]
+      lapack: [openblas]

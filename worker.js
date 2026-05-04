@@ -4,7 +4,9 @@
  * Responsibilities:
  *  1. Load Pyodide (WASM Python runtime)
  *  2. Fetch and unpack spack-lite.tar.gz into /home/pyodide/spack (MEMFS)
- *  3. Execute shim_system.py to monkey-patch subprocess / os / platform
+ *  3. Execute shim_system.py to monkey-patch os/platform/subprocess and
+ *     install stubs for Pyodide-removed modules (termios, tty, readline,
+ *     fcntl, grp, pwd)
  *  4. Inject a fake compiler + package configuration into ~/.spack
  *  5. Receive { type: 'run', command: '...' } messages and return results
  */
@@ -157,15 +159,16 @@ for path, content in cfg_files.items():
 `);
 
     // 6. Load and execute the system shim
+    // shim_system.py is the single canonical source for all module shims.
+    // It is served from the same origin as worker.js; if it cannot be
+    // fetched the worker raises an error rather than continuing with a
+    // partial / out-of-date fallback.
     setStatus('loading', 'Applying system shims…');
     const shimResponse = await fetch('shim_system.py');
-    let shimCode;
-    if (shimResponse.ok) {
-      shimCode = await shimResponse.text();
-    } else {
-      // Inline fallback shim in case we can't fetch the file
-      shimCode = INLINE_SHIM;
+    if (!shimResponse.ok) {
+      throw new Error(`Failed to fetch shim_system.py (HTTP ${shimResponse.status})`);
     }
+    const shimCode = await shimResponse.text();
     await pyodide.runPythonAsync(shimCode);
 
     // 7. Done
@@ -176,134 +179,6 @@ for path, content in cfg_files.items():
     setStatus('error', 'Init failed: ' + err.message);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Inline fallback shim (mirrors shim_system.py — used only when the fetch
-// of shim_system.py fails; keep version strings here in sync with that file)
-// ---------------------------------------------------------------------------
-// Shared version strings used in mock subprocess responses
-const _GCC_VERSION_STR = 'gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0';
-const _GPP_VERSION_STR = 'g++ (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0';
-const _GFC_VERSION_STR = 'GNU Fortran (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0';
-
-const INLINE_SHIM = `
-import sys
-import os
-import platform
-
-# --- platform overrides ---
-sys.platform = 'linux'
-os.name = 'posix'
-
-# Override platform functions so Spack detects a Linux x86_64 host
-_orig_uname = os.uname if hasattr(os, 'uname') else None
-
-class _FakeUname:
-    sysname  = 'Linux'
-    nodename = 'spack-browser'
-    release  = '5.15.0'
-    version  = '#1 SMP'
-    machine  = 'x86_64'
-    def __iter__(self):
-        return iter([self.sysname, self.nodename, self.release, self.version, self.machine])
-
-os.uname = lambda: _FakeUname()
-platform.machine    = lambda: 'x86_64'
-platform.system     = lambda: 'Linux'
-platform.release    = lambda: '5.15.0'
-platform.node       = lambda: 'spack-browser'
-platform.processor  = lambda: 'x86_64'
-
-def _fake_uname_result():
-    import collections
-    fields = ['system','node','release','version','machine','processor']
-    T = collections.namedtuple('uname_result', fields)
-    return T('Linux','spack-browser','5.15.0','#1 SMP','x86_64','x86_64')
-platform.uname = _fake_uname_result
-
-# --- subprocess shim ---
-import subprocess
-from unittest.mock import MagicMock
-
-def _mock_run(args=None, *extra_args, **kwargs):
-    cmd = ' '.join(map(str, args)) if isinstance(args, (list, tuple)) else str(args or '')
-    stdout = b''
-    stderr = b''
-    returncode = 0
-
-    if 'uname' in cmd:
-        stdout = b'x86_64'
-    elif 'gcc' in cmd or 'cc' in cmd:
-        stdout = b'${_GCC_VERSION_STR}\\n'
-    elif 'g++' in cmd or 'c++' in cmd:
-        stdout = b'${_GPP_VERSION_STR}\\n'
-    elif 'gfortran' in cmd:
-        stdout = b'${_GFC_VERSION_STR}\\n'
-    elif 'git' in cmd:
-        stdout = b'git version 2.34.1\\n'
-    elif 'lscpu' in cmd:
-        stdout = b'Architecture: x86_64\\nCPU(s): 4\\n'
-    elif 'clingo' in cmd:
-        stdout = b'clingo version 5.6.2\\n'
-
-    result = MagicMock()
-    result.stdout = stdout
-    result.stderr = stderr
-    result.returncode = returncode
-    result.args = args
-    return result
-
-class _MockPopen:
-    def __init__(self, args=None, *extra, **kwargs):
-        self._result = _mock_run(args)
-    def communicate(self, input=None, timeout=None):
-        return self._result.stdout, self._result.stderr
-    def wait(self, timeout=None):
-        return 0
-    def __enter__(self): return self
-    def __exit__(self, *a): pass
-    stdout = None
-    stderr = None
-    returncode = 0
-    pid = 12345
-
-subprocess.run   = _mock_run
-subprocess.call  = lambda *a, **kw: 0
-subprocess.check_call = lambda *a, **kw: 0
-subprocess.check_output = lambda args=None, *extra, **kw: _mock_run(args).stdout
-subprocess.Popen = _MockPopen
-
-# Prevent Spack from trying to write to real filesystem paths
-os.makedirs('/tmp/spack-stage', exist_ok=True)
-os.environ.setdefault('SPACK_DISABLE_LOCAL_CONFIG', '0')
-os.environ.setdefault('SPACK_USER_CONFIG_PATH', '/home/pyodide/.spack')
-
-# --- fcntl shim (removed from Pyodide) ---
-try:
-    import fcntl
-except ImportError:
-    import types as _types
-    _fcntl = _types.ModuleType('fcntl')
-    _fcntl.LOCK_SH = 1
-    _fcntl.LOCK_EX = 2
-    _fcntl.LOCK_NB = 4
-    _fcntl.LOCK_UN = 8
-    _fcntl.F_GETFD = 1
-    _fcntl.F_SETFD = 2
-    _fcntl.F_GETFL = 3
-    _fcntl.F_SETFL = 4
-    _fcntl.FD_CLOEXEC = 1
-    _fcntl.flock = lambda fd, op: None
-    _fcntl.lockf = lambda fd, cmd, len=0, start=0, whence=0: None
-    import errno as _errno
-    def _fcntl_stub(fd, cmd, arg=0):
-        raise OSError(_errno.ENOSYS, 'Function not implemented')
-    def _ioctl_stub(fd, req, arg=0, mutate_flag=True):
-        raise OSError(_errno.ENOTTY, 'Inappropriate ioctl for device')
-    _fcntl.fcntl = _fcntl_stub
-    _fcntl.ioctl = _ioctl_stub
-    sys.modules['fcntl'] = _fcntl
-`;
 
 // ---------------------------------------------------------------------------
 // Command runner

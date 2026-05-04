@@ -98,7 +98,6 @@ config:
 // Main initialisation
 // ---------------------------------------------------------------------------
 let pyodide = null;
-let spackLoaded = false;
 
 async function init() {
   try {
@@ -122,7 +121,6 @@ import os
 os.makedirs('/home/pyodide/spack', exist_ok=True)
 `);
         pyodide.unpackArchive(buffer, 'gztar', { extractDir: '/home/pyodide' });
-        spackLoaded = true;
       }
     } catch (fetchErr) {
       console.warn('spack-lite.tar.gz not found — running in demo mode:', fetchErr);

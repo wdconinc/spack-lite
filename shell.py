@@ -69,13 +69,28 @@ def _display_cwd():
 
 
 def _split_pipeline(line):
-    """Split *line* on unquoted '|' characters into stage strings."""
+    """Split *line* on unquoted '|' characters into stage strings.
+
+    Correctly handles single-quoted strings, double-quoted strings, and
+    backslash escapes outside single quotes so that a ``|`` inside a quoted
+    context is never treated as a pipeline separator.
+    """
     stages = []
     current = []
     in_single = False
     in_double = False
+    escaped = False
     for ch in line:
-        if ch == "'" and not in_double:
+        if escaped:
+            # The previous character was an unquoted backslash; pass through
+            # both the backslash (already appended) and this character.
+            current.append(ch)
+            escaped = False
+        elif ch == '\\' and not in_single:
+            # Backslash outside single quotes introduces an escape sequence.
+            escaped = True
+            current.append(ch)
+        elif ch == "'" and not in_double:
             in_single = not in_single
             current.append(ch)
         elif ch == '"' and not in_single:
@@ -144,6 +159,18 @@ def _cmd_ls(args, stdin):
     if not paths:
         paths = [os.getcwd()]
 
+    def _format_entry(name, full_path):
+        """Return a single formatted line for *name* at *full_path*."""
+        is_dir = os.path.isdir(full_path)
+        if long_fmt:
+            try:
+                size = os.stat(full_path).st_size
+            except OSError:
+                size = 0
+            mode = 'd' if is_dir else '-'
+            return f'{mode}rwxr-xr-x  {size:>10d}  {name}{"/" if is_dir else ""}'
+        return name + ('/' if is_dir else '')
+
     out = []
     for path in paths:
         try:
@@ -151,21 +178,12 @@ def _cmd_ls(args, stdin):
             if not show_all:
                 entries = [e for e in entries if not e.startswith('.')]
             for e in entries:
-                full = os.path.join(path, e)
-                is_dir = os.path.isdir(full)
-                if long_fmt:
-                    try:
-                        size = os.stat(full).st_size
-                    except OSError:
-                        size = 0
-                    mode = 'd' if is_dir else '-'
-                    out.append(f'{mode}rwxr-xr-x  {size:>10d}  {e}{"/" if is_dir else ""}')
-                else:
-                    out.append(e + ('/' if is_dir else ''))
+                out.append(_format_entry(e, os.path.join(path, e)))
         except FileNotFoundError:
             out.append(f"ls: cannot access '{path}': No such file or directory")
         except NotADirectoryError:
-            out.append(os.path.basename(path))
+            # path is a plain file — show it directly (respects -l)
+            out.append(_format_entry(os.path.basename(path), path))
     return '\n'.join(out) + '\n' if out else ''
 
 
@@ -427,6 +445,10 @@ def _cmd_which(args, stdin):
     path_dirs = os.environ.get('PATH', '/usr/bin:/bin').split(':')
     out = []
     for name in args:
+        # Shell built-ins take precedence over filesystem executables.
+        if name in _BUILTINS:
+            out.append(f'{name}: shell built-in\n')
+            continue
         found = False
         for d in path_dirs:
             candidate = os.path.join(d, name)

@@ -152,7 +152,10 @@ let savedInput   = '';   // preserves in-progress input during history browsing
 let currentCwd = '~';
 
 function getPrompt() {
-  return `\x1b[32mspack-lite\x1b[0m:\x1b[34m${currentCwd}\x1b[0m$ `;
+  // Strip ASCII control characters (including ESC) to prevent terminal
+  // escape-sequence injection via crafted directory names.
+  const safeCwd = currentCwd.replace(/[\x00-\x1f\x7f]/g, '');
+  return `\x1b[32mspack-lite\x1b[0m:\x1b[34m${safeCwd}\x1b[0m$ `;
 }
 
 function enableInput() {
@@ -271,13 +274,14 @@ const HELP_TEXT = `
   \x1b[1mspack\x1b[0m spec <spec>           — concretize a spec
   \x1b[1mls\x1b[0m [-la] [<path>]          — list directory contents
   \x1b[1mcd\x1b[0m [<path>]               — change directory  (\x1b[2m~ supported\x1b[0m)
+  \x1b[1mpwd\x1b[0m                        — print working directory
   \x1b[1mcat\x1b[0m <file>                 — print file contents
   \x1b[1mecho\x1b[0m <text>                — print text
   \x1b[1mgrep\x1b[0m [-inv] <pat> [<file>] — search for pattern
   \x1b[1mhead\x1b[0m / \x1b[1mtail\x1b[0m [-n N] [<file>]  — first / last N lines
   \x1b[1mmkdir\x1b[0m / \x1b[1mrm\x1b[0m / \x1b[1mcp\x1b[0m / \x1b[1mmv\x1b[0m       — file operations
   \x1b[1menv\x1b[0m                        — show environment variables
-  \x1b[1mwhich\x1b[0m <cmd>                — locate a command
+  \x1b[1mwhich\x1b[0m <cmd>                — locate a command or built-in
   \x1b[1mfind\x1b[0m [<path>] [-name <pat>] [-type f|d] — find files
   \x1b[1mhelp\x1b[0m                       — show this help
   \x1b[1mclear\x1b[0m                      — clear the terminal

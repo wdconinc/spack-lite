@@ -27,7 +27,7 @@ Python) and an [xterm.js](https://xtermjs.org/) terminal emulator.
 | `echo <text>` | Print text |
 | `head [-n N] [file]` | Print first N lines (default 10) |
 | `tail [-n N] [file]` | Print last N lines (default 10) |
-| `grep [-inv] <pat> [file]` | Search for pattern |
+| `grep [-i] [-v] [-n] <pat> [file]` | Search for pattern |
 | `mkdir [-p] <path>` | Create directory |
 | `rm [-rf] <path>` | Remove file or directory |
 | `cp [-r] <src> <dst>` | Copy file or directory |
@@ -154,8 +154,8 @@ Disables checksum verification and SSL (unnecessary for a static demo), and sets
 ## Shell Design (`shell.py`)
 
 `shell.py` implements a Python-backed POSIX-like shell that handles all
-non-`spack` commands.  It is loaded by the Web Worker after `shim_system.py`
-and exposes a single public function:
+terminal commands, including `spack`.  It is loaded by the Web Worker after
+`shim_system.py` and exposes a single public function:
 
 ```python
 result_json = run_shell_command(line)  # returns {"output": "...", "cwd": "..."}

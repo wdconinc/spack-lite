@@ -33,7 +33,7 @@ function setStatus(state, message) {
 
 // Redirect Python stdout/stderr so we can stream it to the terminal.
 const STDOUT_REDIRECT = `
-import sys, js
+import sys, js, io
 
 class _JsWriter:
     def write(self, text):
@@ -41,6 +41,10 @@ class _JsWriter:
             js.postMessage(js.Object.fromEntries([['type','stdout'],['text', text]]))
     def flush(self):
         pass
+    def isatty(self):
+        return False
+    def fileno(self):
+        raise io.UnsupportedOperation('fileno')
 
 sys.stdout = _JsWriter()
 sys.stderr = _JsWriter()
@@ -186,6 +190,25 @@ const _GCC_VERSION_STR = 'gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0';
 const _GPP_VERSION_STR = 'g++ (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0';
 const _GFC_VERSION_STR = 'GNU Fortran (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0';
 
+// /proc/cpuinfo content shared between INLINE_SHIM and (for reference) shim_system.py.
+// Describes an Intel Haswell x86_64 so archspec resolves a concrete microarch target.
+const _CPUINFO_CONTENT = [
+  'processor\t: 0',
+  'vendor_id\t: GenuineIntel',
+  'cpu family\t: 6',
+  'model\t\t: 60',
+  'model name\t: Intel(R) Core(TM) i5-4590 CPU @ 3.30GHz',
+  'stepping\t: 3',
+  'flags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov ' +
+    'pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm ' +
+    'constant_tsc rep_good nopl xtopology nonstop_tsc cpuid aperfmperf pni ' +
+    'pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt ' +
+    'tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm invpcid_single ' +
+    'fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid xsaveopt',
+  'bogomips\t: 6584.00',
+  '',
+].join('\n');
+
 const INLINE_SHIM = `
 import sys
 import os
@@ -220,6 +243,9 @@ def _fake_uname_result():
     T = collections.namedtuple('uname_result', fields)
     return T('Linux','spack-browser','5.15.0','#1 SMP','x86_64','x86_64')
 platform.uname = _fake_uname_result
+
+# os.isatty — always False in a browser web-worker (no real TTY)
+os.isatty = lambda fd: False
 
 # --- subprocess shim ---
 import subprocess
@@ -277,6 +303,14 @@ subprocess.Popen = _MockPopen
 os.makedirs('/tmp/spack-stage', exist_ok=True)
 os.environ.setdefault('SPACK_DISABLE_LOCAL_CONFIG', '0')
 os.environ.setdefault('SPACK_USER_CONFIG_PATH', '/home/pyodide/.spack')
+
+# /proc/cpuinfo — archspec reads this for CPU microarchitecture detection.
+try:
+    os.makedirs('/proc', exist_ok=True)
+    with open('/proc/cpuinfo', 'w') as _f:
+        _f.write(${JSON.stringify(_CPUINFO_CONTENT)})
+except (PermissionError, OSError):
+    pass
 
 # --- fcntl shim (removed from Pyodide) ---
 try:
@@ -482,6 +516,14 @@ except ImportError:
 const RUN_COMMAND_PY = `
 import io, sys
 
+class _SpackBuffer(io.StringIO):
+    """StringIO that provides fileno()/isatty() so Spack's TTY-detection code
+    does not raise io.UnsupportedOperation and abort the command."""
+    def fileno(self):
+        return 1  # pretend to be stdout; os.isatty(1) is False in Pyodide
+    def isatty(self):
+        return False
+
 def _run_spack_command(command_str):
     """Execute a spack CLI command and return captured output as a string."""
     parts = command_str.strip().split()
@@ -495,7 +537,7 @@ def _run_spack_command(command_str):
     spack_args = parts[1:]
 
     # Capture stdout
-    buf = io.StringIO()
+    buf = _SpackBuffer()
     old_stdout = sys.stdout
     old_stderr = sys.stderr
     try:

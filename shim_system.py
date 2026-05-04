@@ -56,6 +56,9 @@ class _FakeUname:
 
 os.uname = lambda: _FakeUname()
 
+# os.isatty — always False in a browser web-worker (no real TTY)
+os.isatty = lambda fd: False
+
 # platform module
 platform.machine = lambda: "x86_64"
 platform.system = lambda: "Linux"
@@ -202,12 +205,37 @@ _REQUIRED_DIRS = [
     "/home/pyodide/.spack/darwin",
     "/tmp/spack-stage",
     "/tmp/spack-cache",
+    "/proc",
 ]
 for _d in _REQUIRED_DIRS:
     try:
         os.makedirs(_d, exist_ok=True)
     except (PermissionError, OSError):
         pass  # Silently skip on non-Pyodide hosts
+
+# /proc/cpuinfo — archspec reads this file to identify the CPU microarchitecture.
+# Provide a realistic x86_64 (Haswell) entry so archspec resolves a concrete
+# target rather than falling through to slow/broken fallback paths.
+_CPUINFO = """\
+processor\t: 0
+vendor_id\t: GenuineIntel
+cpu family\t: 6
+model\t\t: 60
+model name\t: Intel(R) Core(TM) i5-4590 CPU @ 3.30GHz
+stepping\t: 3
+flags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov \
+pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm \
+constant_tsc rep_good nopl xtopology nonstop_tsc cpuid aperfmperf pni \
+pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt \
+tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm invpcid_single \
+fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid xsaveopt
+bogomips\t: 6584.00
+"""
+try:
+    with open("/proc/cpuinfo", "w") as _f:
+        _f.write(_CPUINFO)
+except (PermissionError, OSError):
+    pass
 
 # ---------------------------------------------------------------------------
 # 5.  Patch grp / pwd modules (may not exist in Pyodide)

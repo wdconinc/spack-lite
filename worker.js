@@ -35,7 +35,7 @@ function setStatus(state, message) {
 
 // Redirect Python stdout/stderr so we can stream it to the terminal.
 const STDOUT_REDIRECT = `
-import sys, js
+import sys, js, io
 
 class _JsWriter:
     def write(self, text):
@@ -43,6 +43,10 @@ class _JsWriter:
             js.postMessage(js.Object.fromEntries([['type','stdout'],['text', text]]))
     def flush(self):
         pass
+    def isatty(self):
+        return False
+    def fileno(self):
+        raise io.UnsupportedOperation('fileno')
 
 sys.stdout = _JsWriter()
 sys.stderr = _JsWriter()
@@ -186,6 +190,14 @@ for path, content in cfg_files.items():
 const RUN_COMMAND_PY = `
 import io, sys
 
+class _SpackBuffer(io.StringIO):
+    """StringIO that provides fileno()/isatty() so Spack's TTY-detection code
+    does not raise io.UnsupportedOperation and abort the command."""
+    def fileno(self):
+        return 1  # pretend to be stdout; os.isatty(1) is False in Pyodide
+    def isatty(self):
+        return False
+
 def _run_spack_command(command_str):
     """Execute a spack CLI command and return captured output as a string."""
     parts = command_str.strip().split()
@@ -199,7 +211,7 @@ def _run_spack_command(command_str):
     spack_args = parts[1:]
 
     # Capture stdout
-    buf = io.StringIO()
+    buf = _SpackBuffer()
     old_stdout = sys.stdout
     old_stderr = sys.stderr
     try:

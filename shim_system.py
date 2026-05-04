@@ -17,6 +17,8 @@ Modules patched
 7.  tty             — setraw / setcbreak no-ops (wraps termios)
 8.  readline        — tab-completion stubs (used by `spack python`)
 9.  fcntl           — file-locking no-ops; fcntl/ioctl raise ENOSYS/ENOTTY
+10. ssl             — stub context / wrap_socket (browser handles TLS at JS layer)
+11. lzma            — raises LZMAError on use (no WASM lzma available by default)
 
 This file is the **single canonical source** for all Pyodide compatibility
 shims.  worker.js fetches it over HTTP and executes it at start-up; there
@@ -80,6 +82,9 @@ class _FakeUname:
 
 
 os.uname = lambda: _FakeUname()
+
+# os.isatty — always False in a browser web-worker (no real TTY)
+os.isatty = lambda fd: False
 
 # platform module
 platform.machine = lambda: "x86_64"
@@ -227,12 +232,37 @@ _REQUIRED_DIRS = [
     "/home/pyodide/.spack/darwin",
     "/tmp/spack-stage",
     "/tmp/spack-cache",
+    "/proc",
 ]
 for _d in _REQUIRED_DIRS:
     try:
         os.makedirs(_d, exist_ok=True)
     except (PermissionError, OSError):
         pass  # Silently skip on non-Pyodide hosts
+
+# /proc/cpuinfo — archspec reads this file to identify the CPU microarchitecture.
+# Provide a realistic x86_64 (Haswell) entry so archspec resolves a concrete
+# target rather than falling through to slow/broken fallback paths.
+_CPUINFO = """\
+processor\t: 0
+vendor_id\t: GenuineIntel
+cpu family\t: 6
+model\t\t: 60
+model name\t: Intel(R) Core(TM) i5-4590 CPU @ 3.30GHz
+stepping\t: 3
+flags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov \
+pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm \
+constant_tsc rep_good nopl xtopology nonstop_tsc cpuid aperfmperf pni \
+pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt \
+tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm invpcid_single \
+fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid xsaveopt
+bogomips\t: 6584.00
+"""
+try:
+    with open("/proc/cpuinfo", "w") as _f:
+        _f.write(_CPUINFO)
+except (PermissionError, OSError):
+    pass
 
 # ---------------------------------------------------------------------------
 # 5.  Patch grp / pwd modules (may not exist in Pyodide)
@@ -435,3 +465,196 @@ except ImportError:
 
     sys.modules["fcntl"] = _fcntl
 
+
+# 10.  Patch ssl module (unvendored from Pyodide stdlib)
+#     Spack imports ssl transitively (via urllib / http.client).  We provide
+#     enough of the public API to satisfy import-time attribute lookups while
+#     keeping actual SSL connections impossible (the browser sandbox handles
+#     TLS at the JS layer anyway).
+# ---------------------------------------------------------------------------
+try:
+    import ssl  # noqa: F401
+except ImportError:
+    import types
+
+    _ssl = types.ModuleType("ssl")
+
+    # --- Exception hierarchy -------------------------------------------------
+    class _SSLError(OSError):
+        pass
+
+    class _SSLEOFError(_SSLError):
+        pass
+
+    class _SSLWantReadError(_SSLError):
+        pass
+
+    class _SSLWantWriteError(_SSLError):
+        pass
+
+    class _CertificateError(ValueError):
+        pass
+
+    _ssl.SSLError = _SSLError
+    _ssl.SSLEOFError = _SSLEOFError
+    _ssl.SSLWantReadError = _SSLWantReadError
+    _ssl.SSLWantWriteError = _SSLWantWriteError
+    _ssl.CertificateError = _CertificateError
+
+    # --- Protocol constants --------------------------------------------------
+    _ssl.PROTOCOL_TLS = 2
+    _ssl.PROTOCOL_TLS_CLIENT = 16
+    _ssl.PROTOCOL_TLS_SERVER = 17
+    _ssl.PROTOCOL_SSLv23 = 2  # legacy alias for PROTOCOL_TLS
+
+    # --- Certificate verification constants ----------------------------------
+    _ssl.CERT_NONE = 0
+    _ssl.CERT_OPTIONAL = 1
+    _ssl.CERT_REQUIRED = 2
+
+    # --- Options -------------------------------------------------------------
+    _ssl.OP_ALL = 0x80000054
+    _ssl.OP_NO_SSLv2 = 0x01000000
+    _ssl.OP_NO_SSLv3 = 0x02000000
+    _ssl.OP_NO_TLSv1 = 0x04000000
+    _ssl.OP_NO_TLSv1_1 = 0x10000000
+    _ssl.OP_NO_TLSv1_2 = 0x20000000
+    _ssl.OP_NO_COMPRESSION = 0x00020000
+
+    # --- Purpose enum-like object used by create_default_context -------------
+    class _Purpose:
+        SERVER_AUTH = object()
+        CLIENT_AUTH = object()
+
+    _ssl.Purpose = _Purpose
+
+    # --- SSLContext stub ------------------------------------------------------
+    class _SSLContext:
+        def __init__(self, protocol=None):
+            self.check_hostname = False
+            self.verify_mode = _ssl.CERT_NONE
+            self.options = _ssl.OP_ALL
+
+        def load_verify_locations(self, cafile=None, capath=None, cadata=None):
+            pass
+
+        def load_cert_chain(self, certfile, keyfile=None, password=None):
+            pass
+
+        def set_default_verify_paths(self):
+            pass
+
+        def set_ciphers(self, ciphers):
+            pass
+
+        def wrap_socket(self, sock, server_side=False, do_handshake_on_connect=True,
+                        suppress_ragged_eofs=True, server_hostname=None):
+            raise _SSLError("SSL wrapping is not supported in the Pyodide WebAssembly environment")
+
+    _ssl.SSLContext = _SSLContext
+
+    # --- Convenience helpers -------------------------------------------------
+    def _create_default_context(purpose=None, *, cafile=None, capath=None, cadata=None):
+        return _SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+
+    _ssl.create_default_context = _create_default_context
+    _ssl._create_default_https_context = _create_default_context
+    _ssl._create_unverified_context = _create_default_context
+
+    def _wrap_socket(sock, keyfile=None, certfile=None, server_side=False,
+                     cert_reqs=None, ssl_version=None, ca_certs=None,
+                     do_handshake_on_connect=True, suppress_ragged_eofs=True,
+                     ciphers=None):
+        raise _SSLError("SSL wrapping is not supported in the Pyodide WebAssembly environment")
+
+    _ssl.wrap_socket = _wrap_socket
+
+    sys.modules["ssl"] = _ssl
+
+# ---------------------------------------------------------------------------
+# 11.  Patch lzma module (unvendored from Pyodide stdlib)
+#     Spack uses lzma for .tar.xz archives.  We expose the full public API so
+#     that import-time code succeeds; actual compression/decompression raises
+#     LZMAError because no WASM lzma implementation is available by default.
+# ---------------------------------------------------------------------------
+try:
+    import lzma  # noqa: F401
+except ImportError:
+    import types
+
+    _lzma = types.ModuleType("lzma")
+
+    class _LZMAError(Exception):
+        pass
+
+    _lzma.LZMAError = _LZMAError
+
+    # Format constants
+    _lzma.FORMAT_AUTO = 0
+    _lzma.FORMAT_XZ = 1
+    _lzma.FORMAT_ALONE = 2
+    _lzma.FORMAT_RAW = 3
+
+    # Check constants
+    _lzma.CHECK_NONE = 0
+    _lzma.CHECK_CRC32 = 1
+    _lzma.CHECK_CRC64 = 4
+    _lzma.CHECK_SHA256 = 10
+    _lzma.CHECK_ID_MAX = 15
+    _lzma.CHECK_UNKNOWN = 16
+
+    # Filter IDs
+    _lzma.FILTER_LZMA1 = 0x09300e5a
+    _lzma.FILTER_LZMA2 = 0x21
+    _lzma.FILTER_DELTA = 0x03
+    _lzma.FILTER_X86 = 0x04
+    _lzma.FILTER_IA64 = 0x06
+    _lzma.FILTER_ARM = 0x07
+    _lzma.FILTER_ARMTHUMB = 0x08
+    _lzma.FILTER_SPARC = 0x09
+    _lzma.FILTER_POWERPC = 0x05
+
+    # Preset / mode constants
+    _lzma.PRESET_DEFAULT = 6
+    _lzma.PRESET_EXTREME = (1 << 31)
+    _lzma.MODE_FAST = 1
+    _lzma.MODE_NORMAL = 2
+    _lzma.MF_HC3 = 3
+    _lzma.MF_HC4 = 4
+    _lzma.MF_BT2 = 18
+    _lzma.MF_BT3 = 19
+    _lzma.MF_BT4 = 20
+
+    _LZMA_UNAVAILABLE = "lzma compression is not available in the Pyodide WebAssembly environment"
+
+    def compress(data, format=_lzma.FORMAT_XZ, check=-1, preset=None, filters=None):
+        raise _LZMAError(_LZMA_UNAVAILABLE)
+
+    def decompress(data, format=_lzma.FORMAT_AUTO, memlimit=None, filters=None):
+        raise _LZMAError(_LZMA_UNAVAILABLE)
+
+    _lzma.compress = compress
+    _lzma.decompress = decompress
+
+    class _LZMAFile:
+        def __init__(self, *args, **kwargs):
+            raise _LZMAError(_LZMA_UNAVAILABLE)
+
+    class _LZMACompressor:
+        def __init__(self, *args, **kwargs):
+            raise _LZMAError(_LZMA_UNAVAILABLE)
+
+    class _LZMADecompressor:
+        def __init__(self, *args, **kwargs):
+            raise _LZMAError(_LZMA_UNAVAILABLE)
+
+    _lzma.LZMAFile = _LZMAFile
+    _lzma.LZMACompressor = _LZMACompressor
+    _lzma.LZMADecompressor = _LZMADecompressor
+
+    def open(*args, **kwargs):  # noqa: A001 — shadows builtin only within this scope
+        raise _LZMAError(_LZMA_UNAVAILABLE)
+
+    _lzma.open = open
+
+    sys.modules["lzma"] = _lzma

@@ -226,8 +226,13 @@ term.onData((data) => {
   } else if (data.length > 0 && !data.startsWith('\x1b')) {
     // Printable characters.  On desktop this is a single character; on mobile
     // it may be several characters at once (paste, autocomplete insertion).
-    // Filter out any remaining control characters before echoing.
-    const printable = [...data].filter(ch => ch >= ' ').join('');
+    // Filter using numeric code points: keep >= 0x20 and explicitly exclude
+    // DEL (0x7f) so that string-comparison edge cases can't slip control
+    // characters into inputBuffer or the terminal display.
+    const printable = [...data].filter(ch => {
+      const cp = ch.codePointAt(0);
+      return cp >= 0x20 && cp !== 0x7f;
+    }).join('');
     if (printable) {
       inputBuffer += printable;
       term.write(printable);

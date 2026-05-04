@@ -52,7 +52,7 @@ bash scripts/make_spack_lite.sh
 ```
 
 The script:
-1. Clones Spack `v0.21.0` (configurable via `SPACK_VERSION=vX.Y.Z`)
+1. Clones Spack `develop` branch (configurable via `SPACK_VERSION=vX.Y.Z` or `SPACK_VERSION=develop`)
 2. Strips `.git`, tests, docs, and all but ~35 demo packages
 3. Injects `spack_config/` (fake compiler + package prefs) into `etc/spack/`
 4. Packs everything as `spack-lite.tar.gz`
@@ -159,7 +159,10 @@ Edit the `KEEP_PKGS` array in `scripts/make_spack_lite.sh` and re-run the script
 ### Changing the Spack version
 
 ```bash
+# Use a specific release tag
 SPACK_VERSION=v0.22.0 bash scripts/make_spack_lite.sh
+# Use the develop branch (default)
+SPACK_VERSION=develop bash scripts/make_spack_lite.sh
 ```
 
 ### Updating the shims

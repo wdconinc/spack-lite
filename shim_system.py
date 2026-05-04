@@ -250,3 +250,45 @@ except ImportError:
     _pwd.getpwuid = lambda uid: _pwdstruct()
     _pwd.getpwall = lambda: [_pwdstruct()]
     sys.modules["pwd"] = _pwd
+
+# ---------------------------------------------------------------------------
+# 6.  Patch fcntl module (removed from Pyodide due to browser limitations)
+# ---------------------------------------------------------------------------
+try:
+    import fcntl  # noqa: F401
+except ImportError:
+    import types
+
+    _fcntl = types.ModuleType("fcntl")
+
+    # Common constants used for file locking / descriptor flags
+    _fcntl.LOCK_SH = 1
+    _fcntl.LOCK_EX = 2
+    _fcntl.LOCK_NB = 4
+    _fcntl.LOCK_UN = 8
+    _fcntl.F_GETFD = 1
+    _fcntl.F_SETFD = 2
+    _fcntl.F_GETFL = 3
+    _fcntl.F_SETFL = 4
+    _fcntl.FD_CLOEXEC = 1
+
+    import errno as _errno
+
+    # File-locking calls are no-ops — locking is meaningless in a
+    # single-threaded browser sandbox where concurrent access cannot occur.
+    _fcntl.flock = lambda fd, operation: None
+    _fcntl.lockf = lambda fd, cmd, len=0, start=0, whence=0: None
+
+    # fcntl() and ioctl() cannot be meaningfully implemented in a WASM
+    # sandbox.  Raise an explicit OSError so callers know the operation
+    # failed rather than silently continuing with bogus flag / buffer data.
+    def _fcntl_stub(fd, cmd, arg=0):
+        raise OSError(_errno.ENOSYS, "Function not implemented")
+
+    def _ioctl_stub(fd, request, arg=0, mutate_flag=True):
+        raise OSError(_errno.ENOTTY, "Inappropriate ioctl for device")
+
+    _fcntl.fcntl = _fcntl_stub
+    _fcntl.ioctl = _ioctl_stub
+
+    sys.modules["fcntl"] = _fcntl

@@ -277,6 +277,32 @@ subprocess.Popen = _MockPopen
 os.makedirs('/tmp/spack-stage', exist_ok=True)
 os.environ.setdefault('SPACK_DISABLE_LOCAL_CONFIG', '0')
 os.environ.setdefault('SPACK_USER_CONFIG_PATH', '/home/pyodide/.spack')
+
+# --- fcntl shim (removed from Pyodide) ---
+try:
+    import fcntl
+except ImportError:
+    import types as _types
+    _fcntl = _types.ModuleType('fcntl')
+    _fcntl.LOCK_SH = 1
+    _fcntl.LOCK_EX = 2
+    _fcntl.LOCK_NB = 4
+    _fcntl.LOCK_UN = 8
+    _fcntl.F_GETFD = 1
+    _fcntl.F_SETFD = 2
+    _fcntl.F_GETFL = 3
+    _fcntl.F_SETFL = 4
+    _fcntl.FD_CLOEXEC = 1
+    _fcntl.flock = lambda fd, op: None
+    _fcntl.lockf = lambda fd, cmd, len=0, start=0, whence=0: None
+    import errno as _errno
+    def _fcntl_stub(fd, cmd, arg=0):
+        raise OSError(_errno.ENOSYS, 'Function not implemented')
+    def _ioctl_stub(fd, req, arg=0, mutate_flag=True):
+        raise OSError(_errno.ENOTTY, 'Inappropriate ioctl for device')
+    _fcntl.fcntl = _fcntl_stub
+    _fcntl.ioctl = _ioctl_stub
+    sys.modules['fcntl'] = _fcntl
 `;
 
 // ---------------------------------------------------------------------------

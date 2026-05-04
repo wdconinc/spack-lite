@@ -264,6 +264,25 @@ try:
 except (PermissionError, OSError):
     pass
 
+# /etc/os-release — Spack's LinuxDistro detection reads this file to determine
+# the OS name and version (e.g. "ubuntu22.04").  Without it the OS field is
+# empty, which causes spec-parsing failures like "expected a single spec, but
+# got more: platform=linux os= target=haswell".
+_OS_RELEASE = """\
+NAME="Ubuntu"
+VERSION="22.04.3 LTS (Jammy Jellyfish)"
+ID=ubuntu
+ID_LIKE=debian
+VERSION_ID="22.04"
+PRETTY_NAME="Ubuntu 22.04.3 LTS"
+"""
+try:
+    os.makedirs("/etc", exist_ok=True)
+    with open("/etc/os-release", "x") as _f:  # "x" = exclusive create; skips if file exists
+        _f.write(_OS_RELEASE)
+except (FileExistsError, PermissionError, OSError):
+    pass
+
 # ---------------------------------------------------------------------------
 # 5.  Patch grp / pwd modules (may not exist in Pyodide)
 # ---------------------------------------------------------------------------

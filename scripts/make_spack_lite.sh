@@ -129,13 +129,15 @@ mkdir -p "${PKGS_DIR}"
 if [[ -d "${BUILTIN_SRC}/build_systems" ]]; then
   cp -r "${BUILTIN_SRC}/build_systems" "${BUILTIN_DST}/build_systems"
 else
-  log "WARNING: build_systems/ not found in ${BUILTIN_SRC} — v2 package API may fail"
+  log "ERROR: build_systems/ not found in ${BUILTIN_SRC} — aborting"
+  exit 1
 fi
 for f in __init__.py repo.yaml; do
   if [[ -f "${BUILTIN_SRC}/${f}" ]]; then
     cp "${BUILTIN_SRC}/${f}" "${BUILTIN_DST}/${f}"
   else
-    log "WARNING: ${f} not found in ${BUILTIN_SRC} — v2 package API may fail"
+    log "ERROR: ${f} not found in ${BUILTIN_SRC} — aborting"
+    exit 1
   fi
 done
 

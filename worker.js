@@ -294,8 +294,11 @@ if os.path.isdir('/home/pyodide/spack/lib/spack'):
 os.environ['SPACK_ROOT'] = '/home/pyodide/spack'
 os.environ['HOME'] = '/home/pyodide'
 
-# Start in the spack root directory
-os.chdir('/home/pyodide/spack')
+# Start in the spack root directory (only when unpacked; fall back to HOME in demo mode)
+if os.path.isdir('/home/pyodide/spack'):
+    os.chdir('/home/pyodide/spack')
+else:
+    os.chdir('/home/pyodide')
 `);
 
     // 6. Create ~/.spack configuration directories

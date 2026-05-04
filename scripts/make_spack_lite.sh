@@ -20,8 +20,7 @@
 #       - var/spack/repos/builtin/packages/*   (only keep the demo set below)
 #       - lib/spack/docs/ and lib/spack/test/
 #       - share/spack/docker/
-#       - etc/spack/
-#   3. Inject the browser config files from spack_config/.
+#   3. Inject the browser config files from spack_config/ into etc/spack/.
 #   4. Pack the result into a .tar.gz with the top-level directory "spack/".
 #
 # Demo packages kept (adjust KEEP_PKGS to change the set):

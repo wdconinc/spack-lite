@@ -81,7 +81,7 @@ from unittest.mock import MagicMock  # noqa: E402
 
 def _build_mock_result(args=None, **kwargs):
     """Return a Mock CompletedProcess-like object with sensible stdout."""
-    cmd = " ".join(args) if isinstance(args, (list, tuple)) else str(args or "")
+    cmd = " ".join(map(str, args)) if isinstance(args, (list, tuple)) else str(args or "")
 
     stdout = b""
     stderr = b""

@@ -4,8 +4,6 @@
 entirely inside a browser tab, using [Pyodide](https://pyodide.org/) (WebAssembly
 Python) and an [xterm.js](https://xtermjs.org/) terminal emulator.
 
-[![demo screenshot](docs/screenshot.png)](index.html)
-
 ---
 
 ## Features

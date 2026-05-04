@@ -82,12 +82,15 @@ config:
   checksum: false
   verify_ssl: false
   install_missing_compilers: false
+  build_jobs: 1
+  db_lock_timeout: 60
 `;
 
 // ---------------------------------------------------------------------------
 // Main initialisation
 // ---------------------------------------------------------------------------
 let pyodide = null;
+let spackLoaded = false;
 
 async function init() {
   try {
@@ -101,7 +104,6 @@ async function init() {
 
     // 3. Fetch and unpack spack-lite.tar.gz
     setStatus('loading', 'Fetching spack-lite archive…');
-    let spackLoaded = false;
     try {
       const response = await fetch(SPACK_LITE_URL);
       if (response.ok) {
@@ -224,7 +226,7 @@ import subprocess
 from unittest.mock import MagicMock
 
 def _mock_run(args=None, *extra_args, **kwargs):
-    cmd = ' '.join(args) if isinstance(args, (list, tuple)) else str(args or '')
+    cmd = ' '.join(map(str, args)) if isinstance(args, (list, tuple)) else str(args or '')
     stdout = b''
     stderr = b''
     returncode = 0
@@ -338,6 +340,12 @@ self.onmessage = async ({ data }) => {
 
   if (!pyodide) {
     post('error', { message: 'Pyodide is not ready yet.' });
+    return;
+  }
+
+  if (!spackLoaded) {
+    post('result', { output: 'Spack archive not loaded (demo mode). ' +
+      'Build spack-lite.tar.gz with scripts/make_spack_lite.sh and serve it alongside index.html.\n' });
     return;
   }
 

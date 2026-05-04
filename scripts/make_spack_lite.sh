@@ -16,7 +16,7 @@
 # Environment variables:
 #   SPACK_VERSION           Branch/tag of spack/spack to clone. Default: develop
 #   PACKAGES_REPO           Path for the spack-packages clone. Default: /tmp/spack-packages-src
-#   SPACK_PACKAGES_VERSION  Branch/tag of spack/spack-packages. Default: main
+#   SPACK_PACKAGES_VERSION  Branch/tag of spack/spack-packages. Default: develop
 #
 # What this script does:
 #   1. Clone (or use an existing clone of) the Spack core repository.
@@ -82,7 +82,7 @@ fi
 #          package recipes since Spack's new package API v2.x split packages
 #          from the core)
 # ---------------------------------------------------------------------------
-SPACK_PACKAGES_VERSION="${SPACK_PACKAGES_VERSION:-main}"
+SPACK_PACKAGES_VERSION="${SPACK_PACKAGES_VERSION:-develop}"
 if [[ ! -d "${PACKAGES_REPO}/repos" ]]; then
   log "Cloning spack-packages ${SPACK_PACKAGES_VERSION} into ${PACKAGES_REPO} …"
   git clone --depth 1 --branch "${SPACK_PACKAGES_VERSION}" \

@@ -84,10 +84,12 @@ class TestMkdirRmCpMv:
         run_in_shell("rm -rf /tmp/spack_lite_test_dir")
 
     def test_mkdir_existing_no_p(self):
-        # /tmp always exists; mkdir without -p must report "File exists"
-        r = run_in_shell("mkdir /tmp")
+        # Create a fresh directory, then try to create it again without -p.
+        run_in_shell("mkdir -p /tmp/spack_lite_existing_test")
+        r = run_in_shell("mkdir /tmp/spack_lite_existing_test")
         assert r.returncode == 0
         assert "File exists" in r.stdout
+        run_in_shell("rm -rf /tmp/spack_lite_existing_test")
 
     def test_cp_file(self):
         # Create source file via Python (the shell has no I/O redirection)

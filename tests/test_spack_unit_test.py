@@ -127,7 +127,7 @@ class TestSpackUnitTestRun:
             f"Expected at least one passing test in pytest summary.\n"
             f"stdout:\n{r.stdout}\nstderr:\n{r.stderr}"
         )
-        failures = re.search(r"\d+ (failed|error)", combined)
+        failures = re.search(r"\d+ (failed|errors?)", combined)
         assert not failures, (
             f"Tests had unexpected failures or errors: {failures.group()!r}\n"
             f"stdout:\n{r.stdout}\nstderr:\n{r.stderr}"

@@ -21,6 +21,7 @@ Modules patched
 10. ssl             — stub context / wrap_socket (browser handles TLS at JS layer)
 11. lzma            — raises LZMAError on use (no WASM lzma available by default)
 12. fake executables — stub files in /usr/bin so which_string() finds git/gcc/etc.
+13. _multiprocessing — stub C extension; SemLock backed by threading primitives
 
 Git operations
 --------------
@@ -762,3 +763,135 @@ for _exe_path in _FAKE_EXECUTABLES:
             os.chmod(_exe_path, 0o755)
     except (PermissionError, OSError):
         pass  # Silently skip on non-Pyodide hosts
+
+# ---------------------------------------------------------------------------
+# 13.  Patch _multiprocessing (C extension removed from Pyodide stdlib)
+#
+#      Pyodide removes the _multiprocessing C extension because fork(2) and
+#      POSIX semaphores are unavailable in the browser/WASM environment.
+#      This causes ``import multiprocessing`` to fail as soon as any code
+#      path touches multiprocessing.synchronize (which imports _multiprocessing
+#      for SemLock).  Spack's concretizer / spec machinery can trigger this
+#      import path.
+#
+#      Strategy: register a pure-Python stub for ``_multiprocessing`` before
+#      the real multiprocessing package is first imported.  The stub backs
+#      SemLock with threading.Lock / threading.Semaphore so that primitives
+#      function correctly in the single-threaded async WASM runtime.
+#      ``multiprocessing.cpu_count()`` already delegates to ``os.cpu_count()``
+#      on CPython 3.8+ so no extra patching is needed there.
+# ---------------------------------------------------------------------------
+try:
+    import _multiprocessing  # noqa: F401 — already present (CPython); nothing to do
+except ImportError:
+    import threading
+    import types
+
+    _mp_stub = types.ModuleType("_multiprocessing")
+
+    # flags dict expected by multiprocessing.synchronize
+    _mp_stub.flags = {"HAVE_SEM_OPEN": 0, "HAVE_SEM_TIMEDWAIT": 0}
+
+    # sem_unlink is a no-op stub (named semaphores don't exist in WASM)
+    def _sem_unlink(name):
+        pass
+
+    _mp_stub.sem_unlink = _sem_unlink
+
+    # SemLock kinds (mirror CPython constants from CPython's
+    # Lib/multiprocessing/synchronize.py: RECURSIVE_MUTEX, SEMAPHORE = list(range(2)))
+    _SEM_LOCK_RECURSIVE_MUTEX = 0
+    _SEM_LOCK_SEMAPHORE = 1
+
+    class SemLock:
+        """Pure-Python SemLock backed by threading primitives.
+
+        Supports context-manager protocol (acquire/release/__enter__/__exit__)
+        so that multiprocessing.Lock, multiprocessing.Semaphore, etc. work
+        without the C extension.
+        """
+
+        SEM_VALUE_MAX = (1 << 31) - 1
+
+        def __init__(self, kind, value, maxvalue, name="", unlink=True):
+            self.kind = kind
+            self.maxvalue = maxvalue
+            self.name = name
+            self._value = value  # track current semaphore value
+            if kind == _SEM_LOCK_RECURSIVE_MUTEX:
+                self._lock = threading.RLock()
+            else:
+                self._lock = threading.Semaphore(value)
+            self.handle = id(self._lock)
+
+        def acquire(self, block=True, timeout=None):
+            if not block:
+                result = self._lock.acquire(blocking=False)
+            elif timeout is not None:
+                result = self._lock.acquire(blocking=True, timeout=timeout)
+            else:
+                result = self._lock.acquire(blocking=True)
+            if result and self.kind != _SEM_LOCK_RECURSIVE_MUTEX:
+                self._value = max(0, self._value - 1)
+            return result
+
+        def release(self):
+            self._lock.release()
+            if self.kind != _SEM_LOCK_RECURSIVE_MUTEX:
+                self._value = min(self.maxvalue, self._value + 1)
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, *args):
+            self.release()
+
+        def _count(self):
+            # Stub: tracking recursive lock depth is not needed in the
+            # single-threaded Pyodide environment.
+            return 1
+
+        def _is_mine(self):
+            # Stub: no cross-thread ownership tracking needed in WASM.
+            return True
+
+        def _is_zero(self):
+            return self._value == 0
+
+        def _get_value(self):
+            return self._value
+
+        def _after_fork(self):
+            pass
+
+        @staticmethod
+        def _rebuild(handle, kind, maxvalue, name):
+            # _rebuild is called when unpickling a SemLock across processes.
+            # In the Pyodide environment there are no real OS semaphores to
+            # reopen via ``handle``, so we create a fresh threading primitive.
+            # This is acceptable because spack does not pickle synchronization
+            # objects in the browser context.
+            obj = object.__new__(SemLock)
+            obj.handle = handle
+            obj.kind = kind
+            obj.maxvalue = maxvalue
+            obj.name = name
+            obj._value = 1
+            if kind == _SEM_LOCK_RECURSIVE_MUTEX:
+                obj._lock = threading.RLock()
+            else:
+                obj._lock = threading.Semaphore(1)
+            return obj
+
+    _mp_stub.SemLock = SemLock
+
+    sys.modules["_multiprocessing"] = _mp_stub
+
+    # Pre-import the high-level multiprocessing package so it initialises
+    # cleanly against the stub now registered in sys.modules.
+    if "multiprocessing" not in sys.modules:
+        try:
+            import multiprocessing  # noqa: F401
+        except Exception:
+            pass  # Will be resolved when user code actually imports it

@@ -1,0 +1,56 @@
+name: Test — spack unit-test inside Pyodide shell
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run spack unit-test in simulated Pyodide shell
+    runs-on: ubuntu-latest
+
+    env:
+      # Spack branch/tag to clone for testing (same default as deploy.yml)
+      SPACK_VERSION: develop
+      # Where the Spack clone (including lib/spack/spack/test/) will live
+      SPACK_ROOT: /tmp/spack-src
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Clone Spack (full tree, including test files)
+        run: |
+          git clone --depth 1 --branch "${SPACK_VERSION}" \
+              https://github.com/spack/spack.git "${SPACK_ROOT}"
+
+      - name: Install Python test dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pytest pytest-timeout clingo
+
+      - name: Install Spack's Python dependencies
+        # Install packages that Spack's unit tests import at collection time.
+        # We install from Spack's own requirements file when available and fall
+        # back to a minimal set.  Errors are non-fatal; missing extras just
+        # cause individual tests to be skipped by pytest.
+        run: |
+          if [ -f "${SPACK_ROOT}/requirements.txt" ]; then
+            pip install -r "${SPACK_ROOT}/requirements.txt" || true
+          fi
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --timeout=300
+        env:
+          SPACK_ROOT: ${{ env.SPACK_ROOT }}

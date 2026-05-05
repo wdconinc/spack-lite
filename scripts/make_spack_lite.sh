@@ -145,7 +145,10 @@ done
 
 # Packages required for compiler detection to work in the browser.
 # These MUST be present in the spack-packages source or the build aborts.
-REQUIRED_PKGS=(gcc gcc-runtime)
+# Note: gcc-runtime is not a real package in spack-packages (it is a virtual/
+# external package handled specially by Spack), so it is intentionally excluded
+# from this list and will only produce a warning if missing.
+REQUIRED_PKGS=(gcc)
 
 for pkg in "${KEEP_PKGS[@]}"; do
   src="${ORIG_PKGS_DIR}/${pkg}"

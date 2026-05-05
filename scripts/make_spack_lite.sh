@@ -35,10 +35,11 @@
 #   5. Pack the result into a .tar.gz with the top-level directory "spack/".
 #
 # Demo packages kept (adjust KEEP_PKGS to change the set):
-#   autoconf automake bzip2 cmake curl diffutils expat findutils gdbm gettext
-#   hdf5 hwloc libaio libbsd libffi libiconv libpciaccess libsigsegv libtool
-#   libxml2 lz4 m4 ncurses numactl openblas openmpi openssl patch perl pkgconf
-#   python readline sqlite tar util-linux xz zlib zstd
+#   autoconf automake bzip2 cmake curl diffutils expat findutils gcc
+#   gcc-runtime gdbm gettext hdf5 hwloc libaio libbsd libffi libiconv
+#   libpciaccess libsigsegv libtool libxml2 lz4 m4 ncurses numactl
+#   openblas openmpi openssl patch perl pkgconf python readline sqlite
+#   tar util-linux xz zlib zstd
 # =============================================================================
 
 set -euo pipefail
@@ -55,6 +56,7 @@ SPACK_LITE_DIR="${WORK_DIR}/spack"
 # Packages to keep for the in-browser demo
 KEEP_PKGS=(
   autoconf automake bzip2 cmake curl diffutils expat findutils
+  gcc gcc-runtime
   gdbm gettext hdf5 hwloc libaio libbsd libffi libiconv libpciaccess
   libsigsegv libtool libxml2 lz4 m4 ncurses numactl openblas openmpi
   openssl patch perl pkgconf python readline sqlite tar util-linux
@@ -141,12 +143,26 @@ for f in __init__.py repo.yaml; do
   fi
 done
 
+# Packages required for compiler detection to work in the browser.
+# These MUST be present in the spack-packages source or the build aborts.
+REQUIRED_PKGS=(gcc gcc-runtime)
+
 for pkg in "${KEEP_PKGS[@]}"; do
   src="${ORIG_PKGS_DIR}/${pkg}"
   if [[ -d "${src}" ]]; then
     cp -r "${src}" "${PKGS_DIR}/${pkg}"
   else
-    log "WARNING: package '${pkg}' not found in source — skipping"
+    # Required packages are fatal; optional demo packages are only a warning.
+    is_required=0
+    for req in "${REQUIRED_PKGS[@]}"; do
+      [[ "${pkg}" == "${req}" ]] && is_required=1 && break
+    done
+    if [[ "${is_required}" -eq 1 ]]; then
+      log "ERROR: required package '${pkg}' not found in ${ORIG_PKGS_DIR} — aborting"
+      exit 1
+    else
+      log "WARNING: package '${pkg}' not found in source — skipping"
+    fi
   fi
 done
 

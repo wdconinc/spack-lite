@@ -281,6 +281,22 @@ class TestVariableExpansion:
 _SPACK_PYTHON_INTERACTIVE_MSG = "Interactive Python is not supported in browser mode."
 
 
+class TestSpackSpec:
+    """Regression test for 'spack spec zlib' — the user-visible failing command."""
+
+    def test_spack_spec_zlib(self, spack_root):
+        """``spack spec zlib`` must complete without [Errno 52] and print a concrete spec."""
+        r = run_in_shell("spack spec zlib", timeout=120)
+        assert r.returncode == 0, (
+            "spack spec zlib failed.\n"
+            f"stdout: {r.stdout}\n"
+            f"stderr: {r.stderr}"
+        )
+        assert "zlib" in r.stdout, "Expected 'zlib' in spec output"
+        assert "[Errno 52]" not in r.stdout
+        assert "[Errno 52]" not in r.stderr
+
+
 class TestSpackPython:
     """Tests for 'spack python' interactive-mode detection in _cmd_spack."""
 

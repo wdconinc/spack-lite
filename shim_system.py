@@ -23,6 +23,7 @@ Modules patched
 12. fake executables — stub files in /usr/bin so which_string() finds git/gcc/etc.
 13. _multiprocessing — stub C extension; SemLock backed by threading primitives
 14. _posixshmem     — stub C extension; shm_open/shm_unlink raise OSError(ENOSYS)
+15. ProcessPoolExecutor — _ThreadWakeup patched to avoid os.pipe() (ENOSYS in WASM)
 
 Git operations
 --------------
@@ -944,3 +945,153 @@ except ImportError:
             import multiprocessing.shared_memory  # noqa: F401
         except Exception:
             pass  # Will be resolved when user code actually imports it
+
+# ---------------------------------------------------------------------------
+# 15.  Patch multiprocessing.connection.Pipe to avoid os.pipe() in WASM
+#
+#      os.pipe() raises OSError(ENOSYS=52) in Pyodide/Emscripten because the
+#      WASM runtime does not implement POSIX anonymous pipes.  This surfaces
+#      during `spack spec` as "[Errno 52] Function not implemented":
+#
+#        spack.compilers.config._init_packages_yaml()
+#          -> find_compilers()
+#          -> spack.detection.by_path()       (returns empty: no compiler pkgs)
+#          -> spack.util.parallel.make_concurrent_executor()
+#          -> concurrent.futures.ProcessPoolExecutor.__init__()
+#          -> _ThreadWakeup.__init__()
+#          -> mp.Pipe(duplex=False)
+#          -> multiprocessing.connection.Pipe()
+#          -> os.pipe()                        ← OSError(52) here
+#
+#      (The same call chain also runs through multiprocessing.SimpleQueue and
+#      multiprocessing.Queue, which likewise call connection.Pipe internally.)
+#
+#      Fix: when os.pipe() is unavailable, replace multiprocessing.connection.Pipe
+#      with a queue-backed implementation.  BaseContext.Pipe() calls
+#      `from .connection import Pipe` at invocation time, so patching
+#      multiprocessing.connection.Pipe covers all callers uniformly.
+#
+#      The replacement _QueueConnection exposes send_bytes/recv_bytes/poll/close
+#      (the subset actually used by ProcessPoolExecutor internals) backed by a
+#      queue.SimpleQueue.  fileno() raises ENOSYS so code that tries to pass
+#      the fd to select()/poll() will fail loudly rather than silently.
+# ---------------------------------------------------------------------------
+try:
+    _fd_r, _fd_w = __import__("os").pipe()
+    __import__("os").close(_fd_r)
+    __import__("os").close(_fd_w)
+    # os.pipe() works — no patch needed
+except OSError as _pipe_err:
+    if _pipe_err.errno == 52:  # ENOSYS in musl/Emscripten (ENOSYS=52, not 38)
+        try:
+            import multiprocessing.connection as _mp_conn_mod
+            import queue as _queue_mod
+
+            class _QueueConnection:
+                """Connection-like object backed by a queue.SimpleQueue.
+
+                Provides the interface used by multiprocessing.SimpleQueue,
+                multiprocessing.Queue, and concurrent.futures._ThreadWakeup:
+                send_bytes, recv_bytes, poll, send, recv, close, and context
+                manager support.  fileno() raises ENOSYS to surface any attempt
+                to use the fd with OS-level select/poll.
+                """
+
+                def __init__(self, read_q, write_q):
+                    self._read_q = read_q    # SimpleQueue we read from, or None
+                    self._write_q = write_q  # SimpleQueue we write to, or None
+                    self._peek = []  # one-item lookahead buffer for poll()
+
+                def send_bytes(self, buf, offset=0, size=None):
+                    if self._write_q is None:
+                        raise OSError("connection is read-only")
+                    if size is not None:
+                        buf = buf[offset: offset + size]
+                    elif offset:
+                        buf = buf[offset:]
+                    self._write_q.put(bytes(buf))
+
+                def recv_bytes(self, maxlength=-1):
+                    if self._read_q is None:
+                        raise OSError("connection is write-only")
+                    if self._peek:
+                        data = self._peek.pop(0)
+                    else:
+                        data = self._read_q.get()
+                    if maxlength >= 0 and len(data) > maxlength:
+                        raise OSError("Message too long: %d > %d" % (len(data), maxlength))
+                    return data
+
+                def send(self, obj):
+                    import pickle as _pickle
+                    self.send_bytes(_pickle.dumps(obj, protocol=_pickle.HIGHEST_PROTOCOL))
+
+                def recv(self):
+                    import pickle as _pickle
+                    return _pickle.loads(self.recv_bytes())
+
+                def poll(self, timeout=0):
+                    if self._read_q is None:
+                        return False
+                    if self._peek:
+                        return True
+                    try:
+                        if timeout == 0:
+                            item = self._read_q.get_nowait()
+                        else:
+                            item = self._read_q.get(timeout=timeout)
+                        self._peek.append(item)
+                        return True
+                    except _queue_mod.Empty:
+                        return False
+
+                def fileno(self):
+                    raise OSError(52, "Function not implemented")
+
+                def close(self):
+                    pass
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    self.close()
+
+            def _queue_Pipe(duplex=True):
+                """os.pipe()-free Pipe() for WASM/Pyodide environments.
+
+                For duplex=False (half-duplex): returns (reader, writer) where
+                reader is read-only and writer is write-only — matching the
+                standard Pipe(duplex=False) contract.
+
+                For duplex=True (bidirectional): each end has its own receive
+                queue so messages sent from one end are not visible to the
+                same end (matches the standard Pipe(duplex=True) contract).
+                """
+                if duplex:
+                    # Two channels: q1 carries a→b, q2 carries b→a
+                    q1 = _queue_mod.SimpleQueue()
+                    q2 = _queue_mod.SimpleQueue()
+                    # end_a reads from q2 (b→a), writes to q1 (a→b)
+                    # end_b reads from q1 (a→b), writes to q2 (b→a)
+                    return _QueueConnection(q2, q1), _QueueConnection(q1, q2)
+                else:
+                    q = _queue_mod.SimpleQueue()
+                    return _QueueConnection(q, None), _QueueConnection(None, q)
+
+            _mp_conn_mod.Pipe = _queue_Pipe
+
+            # Also make the resource tracker a no-op: it calls os.pipe() to
+            # launch a cleanup subprocess, which is pointless in a single-
+            # process WASM environment with no forking.
+            try:
+                import multiprocessing.resource_tracker as _rt
+                _rt.register = lambda name, rtype: None
+                _rt.unregister = lambda name, rtype: None
+                if hasattr(_rt, "_resource_tracker"):
+                    _rt._resource_tracker = None
+            except (ImportError, AttributeError):
+                pass
+
+        except (ImportError, AttributeError):
+            pass

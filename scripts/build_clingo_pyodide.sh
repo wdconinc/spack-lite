@@ -53,6 +53,12 @@ if [[ ! -d "${CLINGO_REPO}/.git" || ! -f "${CLINGO_REPO}/pyproject.toml" ]]; the
   git -C "${CLINGO_REPO}" submodule update --init --depth 1
 else
   log "Using existing clingo source at ${CLINGO_REPO}"
+  # Ensure we are on the correct branch and the tree is up to date.
+  # Omit --depth 1 on fetch so it works regardless of local history depth.
+  git -C "${CLINGO_REPO}" fetch origin "${CLINGO_BRANCH}"
+  git -C "${CLINGO_REPO}" checkout "${CLINGO_BRANCH}"
+  # Always refresh submodules so missing content doesn't cause build failures.
+  git -C "${CLINGO_REPO}" submodule update --init --depth 1
 fi
 
 # ---------------------------------------------------------------------------
@@ -80,11 +86,15 @@ mkdir -p "${OUTPUT_DIR}"
 # ---------------------------------------------------------------------------
 # Step 4: Report what we produced
 # ---------------------------------------------------------------------------
-WHL=$(ls "${OUTPUT_DIR}"/*.whl 2>/dev/null | head -1)
-if [[ -z "${WHL}" ]]; then
+# Use nullglob so the array is empty (not literally '*.whl') when no file exists.
+shopt -s nullglob
+whls=("${OUTPUT_DIR}"/*.whl)
+shopt -u nullglob
+if [[ ${#whls[@]} -eq 0 ]]; then
   log "ERROR: no .whl found in ${OUTPUT_DIR}"
   exit 1
 fi
+WHL="${whls[0]}"
 log "Wheel built successfully: ${WHL}"
 SIZE=$(du -sh "${WHL}" | cut -f1)
 log "Wheel size: ${SIZE}"

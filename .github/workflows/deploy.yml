@@ -47,9 +47,10 @@ jobs:
           cp shim_system.py _site/
           cp shell.py      _site/
           cp spack-lite.tar.gz _site/
-          # Rename the wheel to a stable filename so worker.js can always
-          # fetch it as 'clingo.whl' regardless of the exact version string.
-          cp /tmp/clingo-wheel/*.whl _site/clingo.whl
+          # Copy the wheel to a stable filename so worker.js can always fetch
+          # it as 'clingo.whl' regardless of the exact version string.
+          # build_clingo_pyodide.sh guarantees exactly one .whl in the output dir.
+          cp "$(echo /tmp/clingo-wheel/*.whl)" _site/clingo.whl
 
       - name: Upload Pages artefact
         uses: actions/upload-pages-artifact@v3

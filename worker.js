@@ -281,15 +281,17 @@ async function init() {
     //    continue — Spack will then fall through to its own bootstrap path and
     //    report a more specific error at concretization time.
     setStatus('loading', 'Installing clingo…');
+    let micropip = null;
     try {
       await pyodide.loadPackage('micropip');
-      const micropip = pyodide.pyimport('micropip');
+      micropip = pyodide.pyimport('micropip');
       // clingo.whl is served from the same directory as worker.js.
       const clingoWheelUrl = new URL('clingo.whl', self.location.href).href;
       await micropip.install(clingoWheelUrl);
-      micropip.destroy();
     } catch (clingoErr) {
       console.warn('clingo wheel not available — bootstrap will be attempted by Spack:', clingoErr);
+    } finally {
+      micropip?.destroy();
     }
 
     // 5. Fetch and unpack spack-lite.tar.gz

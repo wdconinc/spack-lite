@@ -5,13 +5,17 @@
  *  1. Load Pyodide (WASM Python runtime)
  *  2. Load wasm-git (libgit2 compiled to WASM) and expose self.gitCall so
  *     that the Python subprocess shim can delegate real git operations
- *  3. Fetch and unpack spack-lite.tar.gz into /home/pyodide/spack (MEMFS)
- *  4. Execute shim_system.py to monkey-patch os/platform/subprocess and
+ *  3. Redirect stdout/stderr to the terminal
+ *  4. Install clingo (Pyodide wasm32 wheel from potassco/clingo wip-20)
+ *     via micropip so Spack's bootstrap check passes without a bootstrap step
+ *  5. Fetch and unpack spack-lite.tar.gz into /home/pyodide/spack (MEMFS)
+ *  6. Add Spack to sys.path and set SPACK_ROOT / HOME / cwd
+ *  7. Inject a fake compiler + package configuration into ~/.spack
+ *  8. Execute shim_system.py to monkey-patch os/platform/subprocess and
  *     install stubs for Pyodide-removed modules (termios, tty, readline,
  *     fcntl, grp, pwd)
- *  5. Inject a fake compiler + package configuration into ~/.spack
- *  6. Execute shell.py to install the Python-backed POSIX shell interpreter
- *  7. Receive { type: 'run', command: '...' } messages and return results
+ *  9. Execute shell.py to install the Python-backed POSIX shell interpreter
+ * 10. Receive { type: 'run', command: '...' } messages and return results
  *     including the new working directory after each command
  */
 
@@ -268,7 +272,27 @@ async function init() {
     // 3. Redirect stdout/stderr to the terminal
     await pyodide.runPythonAsync(STDOUT_REDIRECT);
 
-    // 4. Fetch and unpack spack-lite.tar.gz
+    // 4. Install clingo (Pyodide wasm32 wheel built from potassco/clingo wip-20).
+    //    This satisfies Spack's bootstrap check: spack.bootstrap.core calls
+    //    _python_import('clingo') first, and if the import succeeds it skips
+    //    the entire bootstrap procedure.  We install the wheel before Spack is
+    //    imported so the import is available from the very first spack call.
+    //    On failure (e.g. wheel not yet built or served) we log a warning and
+    //    continue — Spack will then fall through to its own bootstrap path and
+    //    report a more specific error at concretization time.
+    setStatus('loading', 'Installing clingo…');
+    try {
+      await pyodide.loadPackage('micropip');
+      const micropip = pyodide.pyimport('micropip');
+      // clingo.whl is served from the same directory as worker.js.
+      const clingoWheelUrl = new URL('clingo.whl', self.location.href).href;
+      await micropip.install(clingoWheelUrl);
+      micropip.destroy();
+    } catch (clingoErr) {
+      console.warn('clingo wheel not available — bootstrap will be attempted by Spack:', clingoErr);
+    }
+
+    // 5. Fetch and unpack spack-lite.tar.gz
     setStatus('loading', 'Fetching spack-lite archive…');
     try {
       const response = await fetch(SPACK_LITE_URL);
@@ -285,7 +309,7 @@ os.makedirs('/home/pyodide/spack', exist_ok=True)
       console.warn('spack-lite.tar.gz not found — running in demo mode:', fetchErr);
     }
 
-    // 5. Add Spack to sys.path (if unpacked) and set up the environment
+    // 6. Add Spack to sys.path (if unpacked) and set up the environment
     setStatus('loading', 'Configuring environment…');
     // When spack-lite.tar.gz was not available, Spack commands will produce
     // a clear "module not found" error in the terminal (demo mode).
@@ -310,7 +334,7 @@ else:
     os.chdir('/home/pyodide')
 `);
 
-    // 6. Create ~/.spack configuration directories
+    // 7. Create ~/.spack configuration directories
     await pyodide.runPythonAsync(`
 import os
 
@@ -328,7 +352,7 @@ for path, content in cfg_files.items():
         f.write(content)
 `);
 
-    // 7. Load and execute the system shim
+    // 8. Load and execute the system shim
     // shim_system.py is the single canonical source for all module shims.
     // It is served from the same origin as worker.js; if it cannot be
     // fetched the worker raises an error rather than continuing with a
@@ -341,7 +365,7 @@ for path, content in cfg_files.items():
     const shimCode = await shimResponse.text();
     await pyodide.runPythonAsync(shimCode);
 
-    // 8. Load and execute the shell interpreter
+    // 9. Load and execute the shell interpreter
     // shell.py defines run_shell_command() which handles built-in POSIX-like
     // commands (ls, cd, cat, grep, …) and routes `spack` through the Spack
     // Python API.  It must be loaded after shim_system.py so that the module
@@ -354,7 +378,7 @@ for path, content in cfg_files.items():
     const shellCode = await shellResponse.text();
     await pyodide.runPythonAsync(shellCode);
 
-    // 9. Done
+    // 10. Done
     setStatus('ready', 'Ready');
 
   } catch (err) {

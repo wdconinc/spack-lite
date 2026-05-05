@@ -32,6 +32,13 @@ jobs:
           SPACK_VERSION: develop
         run: bash scripts/make_spack_lite.sh
 
+      - name: Build clingo Pyodide wheel
+        env:
+          # Must match the Pyodide version pinned in worker.js (PYODIDE_CDN)
+          PYODIDE_VERSION: "0.25.1"
+          CLINGO_BRANCH: wip-20
+        run: bash scripts/build_clingo_pyodide.sh
+
       - name: Assemble site artefacts
         run: |
           mkdir -p _site
@@ -40,6 +47,9 @@ jobs:
           cp shim_system.py _site/
           cp shell.py      _site/
           cp spack-lite.tar.gz _site/
+          # Rename the wheel to a stable filename so worker.js can always
+          # fetch it as 'clingo.whl' regardless of the exact version string.
+          cp /tmp/clingo-wheel/*.whl _site/clingo.whl
 
       - name: Upload Pages artefact
         uses: actions/upload-pages-artifact@v3

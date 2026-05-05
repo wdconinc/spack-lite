@@ -35,10 +35,11 @@
 #   5. Pack the result into a .tar.gz with the top-level directory "spack/".
 #
 # Demo packages kept (adjust KEEP_PKGS to change the set):
-#   autoconf automake bzip2 cmake curl diffutils expat findutils gdbm gettext
-#   hdf5 hwloc libaio libbsd libffi libiconv libpciaccess libsigsegv libtool
-#   libxml2 lz4 m4 ncurses numactl openblas openmpi openssl patch perl pkgconf
-#   python readline sqlite tar util-linux xz zlib zstd
+#   autoconf automake bzip2 cmake curl diffutils expat findutils gcc
+#   gcc-runtime gdbm gettext hdf5 hwloc libaio libbsd libffi libiconv
+#   libpciaccess libsigsegv libtool libxml2 lz4 m4 ncurses numactl
+#   openblas openmpi openssl patch perl pkgconf python readline sqlite
+#   tar util-linux xz zlib zstd
 # =============================================================================
 
 set -euo pipefail
@@ -55,6 +56,7 @@ SPACK_LITE_DIR="${WORK_DIR}/spack"
 # Packages to keep for the in-browser demo
 KEEP_PKGS=(
   autoconf automake bzip2 cmake curl diffutils expat findutils
+  gcc gcc-runtime
   gdbm gettext hdf5 hwloc libaio libbsd libffi libiconv libpciaccess
   libsigsegv libtool libxml2 lz4 m4 ncurses numactl openblas openmpi
   openssl patch perl pkgconf python readline sqlite tar util-linux

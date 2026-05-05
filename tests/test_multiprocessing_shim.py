@@ -277,3 +277,106 @@ class TestPosixShMemShimImport:
         assert r.returncode == 0, r.stderr
         assert "inside" in r.stdout
 
+
+# ---------------------------------------------------------------------------
+# ProcessPoolExecutor / os.pipe shim tests (section 15)
+# ---------------------------------------------------------------------------
+
+# Preamble that replaces os.pipe with one that raises OSError(52) — the
+# ENOSYS value used by musl libc in Emscripten/Pyodide — so the shim must
+# install the queue-backed Pipe() fallback.
+_PREAMBLE_OSPIPE = f"""\
+import sys, os, builtins
+
+_real_import = builtins.__import__
+
+_BLOCKED = {{'_multiprocessing', '_posixshmem'}}
+
+def _blocking_import(name, *args, **kwargs):
+    if name in _BLOCKED and name not in sys.modules:
+        raise ImportError("blocked: " + name)
+    return _real_import(name, *args, **kwargs)
+
+builtins.__import__ = _blocking_import
+
+for _key in list(sys.modules.keys()):
+    if 'multiprocessing' in _key or _key in _BLOCKED:
+        del sys.modules[_key]
+
+# Simulate musl/Emscripten where ENOSYS == 52
+_real_pipe = os.pipe
+def _fake_pipe():
+    raise OSError(52, "Function not implemented")
+os.pipe = _fake_pipe
+
+exec(compile(open({_SHIM_PATH!r}).read(), {_SHIM_PATH!r}, "exec"))
+"""
+
+
+def _run_ospipe_shim_script(code: str, *, timeout: int = 30) -> subprocess.CompletedProcess:
+    """Run *code* in a subprocess where ``os.pipe()`` raises OSError(52, ENOSYS)."""
+    script = _PREAMBLE_OSPIPE + code
+    return subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+class TestOsPipeShim:
+    """Section 15: multiprocessing.connection.Pipe is patched when os.pipe() is unavailable."""
+
+    def test_mp_connection_pipe_patched(self):
+        """multiprocessing.connection.Pipe must be replaced with the queue-backed fallback."""
+        r = _run_ospipe_shim_script(
+            "import multiprocessing.connection as mc\n"
+            "print(mc.Pipe.__name__)\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "_queue_Pipe"
+
+    def test_process_pool_executor_construction(self):
+        """ProcessPoolExecutor() must construct without raising OSError(52)."""
+        r = _run_ospipe_shim_script(
+            "import concurrent.futures\n"
+            "executor = concurrent.futures.ProcessPoolExecutor(1)\n"
+            "with executor:\n"
+            "    pass\n"
+            "print('ok')\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "ok"
+
+    def test_queue_connection_send_recv(self):
+        """The queue-backed connection can round-trip bytes."""
+        r = _run_ospipe_shim_script(
+            "import multiprocessing.connection as mc\n"
+            "r, w = mc.Pipe(duplex=False)\n"
+            "w.send_bytes(b'hello')\n"
+            "print(r.recv_bytes())\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "b'hello'"
+
+    def test_queue_connection_poll_empty(self):
+        """poll() returns False on an empty connection."""
+        r = _run_ospipe_shim_script(
+            "import multiprocessing.connection as mc\n"
+            "r, w = mc.Pipe(duplex=False)\n"
+            "print(r.poll(0))\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "False"
+
+    def test_queue_connection_poll_after_send(self):
+        """poll() returns True after send_bytes."""
+        r = _run_ospipe_shim_script(
+            "import multiprocessing.connection as mc\n"
+            "r, w = mc.Pipe(duplex=False)\n"
+            "w.send_bytes(b'data')\n"
+            "print(r.poll(0))\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "True"
+

@@ -6,10 +6,52 @@ shim_system.py monkey-patches are active during execution, exactly
 mirroring the browser's Pyodide environment.
 """
 
+import importlib.util
 import os
 
 import pytest
 from helpers import run_in_shell
+
+# ---------------------------------------------------------------------------
+# Load _spack_python_is_interactive from shell.py without running the whole
+# module (which would exec shims and require spack to be installed).
+# ---------------------------------------------------------------------------
+_SHELL_PY = os.path.join(os.path.dirname(os.path.dirname(__file__)), "shell.py")
+_spec = importlib.util.spec_from_file_location("_shell_funcs", _SHELL_PY)
+_shell_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_shell_mod)
+_spack_python_is_interactive = _shell_mod._spack_python_is_interactive
+
+
+class TestSpackPythonIsInteractive:
+    """Unit tests for _spack_python_is_interactive helper."""
+
+    def test_empty_args_is_interactive(self):
+        assert _spack_python_is_interactive([]) is True
+
+    def test_dash_i_alone_is_interactive(self):
+        assert _spack_python_is_interactive(['-i']) is True
+
+    def test_dash_c_code_not_interactive(self):
+        assert _spack_python_is_interactive(['-c', 'print(1)']) is False
+
+    def test_dash_c_combined_not_interactive(self):
+        assert _spack_python_is_interactive(['-cprint(1)']) is False
+
+    def test_script_arg_not_interactive(self):
+        assert _spack_python_is_interactive(['script.py']) is False
+
+    def test_dash_i_with_script_is_interactive(self):
+        # -i script.py: -i forces interactive mode after running the script
+        assert _spack_python_is_interactive(['-i', 'script.py']) is True
+
+    def test_dash_i_with_dash_c_is_interactive(self):
+        # -i -c "code": -i forces interactive mode after executing the code
+        assert _spack_python_is_interactive(['-i', '-c', 'print(1)']) is True
+
+    def test_double_dash_separator_not_interactive(self):
+        # -- terminates flag processing; anything after is positional
+        assert _spack_python_is_interactive(['--', 'script.py']) is False
 
 
 class TestEcho:
@@ -236,6 +278,9 @@ class TestVariableExpansion:
         assert r.stdout == "\n"  # expands to empty string
 
 
+_SPACK_PYTHON_INTERACTIVE_MSG = "Interactive Python is not supported in browser mode."
+
+
 class TestSpackSpec:
     """Regression test for 'spack spec zlib' — the user-visible failing command."""
 
@@ -250,3 +295,36 @@ class TestSpackSpec:
         assert "zlib" in r.stdout, "Expected 'zlib' in spec output"
         assert "[Errno 52]" not in r.stdout
         assert "[Errno 52]" not in r.stderr
+
+
+class TestSpackPython:
+    """Tests for 'spack python' interactive-mode detection in _cmd_spack."""
+
+    def test_interactive_no_args_shows_helpful_message(self, spack_root):
+        """'spack python' with no args should not crash with ESPIPE."""
+        r = run_in_shell("spack python", extra_env={"SPACK_ROOT": spack_root})
+        assert r.returncode == 0
+        # Must NOT raise [Errno 29] I/O error
+        assert "Errno 29" not in r.stdout
+        assert "I/O error" not in r.stdout
+        # Should tell the user how to use non-interactive mode instead
+        assert _SPACK_PYTHON_INTERACTIVE_MSG in r.stdout
+
+    def test_interactive_dash_i_shows_helpful_message(self, spack_root):
+        """'spack python -i' alone (no script) should also avoid ESPIPE."""
+        r = run_in_shell("spack python -i", extra_env={"SPACK_ROOT": spack_root})
+        assert r.returncode == 0
+        assert "Errno 29" not in r.stdout
+        assert "I/O error" not in r.stdout
+        assert _SPACK_PYTHON_INTERACTIVE_MSG in r.stdout
+
+    def test_interactive_dash_i_dash_c_shows_helpful_message(self, spack_root):
+        """'spack python -i -c ...' forces a REPL after running code; must not hit ESPIPE."""
+        r = run_in_shell(
+            'spack python -i -c "import spack"',
+            extra_env={"SPACK_ROOT": spack_root},
+        )
+        assert r.returncode == 0
+        assert "Errno 29" not in r.stdout
+        assert "I/O error" not in r.stdout
+        assert _SPACK_PYTHON_INTERACTIVE_MSG in r.stdout

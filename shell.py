@@ -548,8 +548,7 @@ def _cmd_spack(args, stdin):
         return (
             "Interactive Python is not supported in browser mode.\n"
             "Use 'spack python -c \"<code>\"' to run Python code.\n"
-            "Example: spack python -c"
-            " \"import spack; print(spack.spack_version)\"\n"
+            "Example: spack python -c \"import spack; print(spack.spack_version)\"\n"
         )
 
     buf = _ShellBuffer()

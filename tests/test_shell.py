@@ -275,6 +275,9 @@ class TestVariableExpansion:
         assert r.stdout == "\n"  # expands to empty string
 
 
+_SPACK_PYTHON_INTERACTIVE_MSG = "Interactive Python is not supported in browser mode."
+
+
 class TestSpackPython:
     """Tests for 'spack python' interactive-mode detection in _cmd_spack."""
 
@@ -286,7 +289,7 @@ class TestSpackPython:
         assert "Errno 29" not in r.stdout
         assert "I/O error" not in r.stdout
         # Should tell the user how to use non-interactive mode instead
-        assert "not supported" in r.stdout or "browser" in r.stdout
+        assert _SPACK_PYTHON_INTERACTIVE_MSG in r.stdout
 
     def test_interactive_dash_i_shows_helpful_message(self, spack_root):
         """'spack python -i' alone (no script) should also avoid ESPIPE."""
@@ -294,4 +297,4 @@ class TestSpackPython:
         assert r.returncode == 0
         assert "Errno 29" not in r.stdout
         assert "I/O error" not in r.stdout
-        assert "not supported" in r.stdout or "browser" in r.stdout
+        assert _SPACK_PYTHON_INTERACTIVE_MSG in r.stdout

@@ -241,30 +241,30 @@ class TestPosixShMemShimImport:
         assert r.stdout.strip() == "ok"
 
     def test_shm_open_raises_oserror(self):
-        """_posixshmem.shm_open must raise OSError (not ImportError)."""
+        """_posixshmem.shm_open must raise OSError with errno.ENOSYS."""
         r = _run_shim_script_both(
-            "import _posixshmem, os\n"
+            "import _posixshmem, os, errno\n"
             "try:\n"
             "    _posixshmem.shm_open('/test', os.O_CREAT | os.O_RDWR, 0o600)\n"
             "    print('no-error')\n"
-            "except OSError:\n"
-            "    print('OSError')\n"
+            "except OSError as e:\n"
+            "    print(e.errno == errno.ENOSYS)\n"
         )
         assert r.returncode == 0, r.stderr
-        assert r.stdout.strip() == "OSError"
+        assert r.stdout.strip() == "True"
 
     def test_shm_unlink_raises_oserror(self):
-        """_posixshmem.shm_unlink must raise OSError (not ImportError)."""
+        """_posixshmem.shm_unlink must raise OSError with errno.ENOSYS."""
         r = _run_shim_script_both(
-            "import _posixshmem\n"
+            "import _posixshmem, errno\n"
             "try:\n"
             "    _posixshmem.shm_unlink('/test')\n"
             "    print('no-error')\n"
-            "except OSError:\n"
-            "    print('OSError')\n"
+            "except OSError as e:\n"
+            "    print(e.errno == errno.ENOSYS)\n"
         )
         assert r.returncode == 0, r.stderr
-        assert r.stdout.strip() == "OSError"
+        assert r.stdout.strip() == "True"
 
     def test_multiprocessing_managers_still_loads_locks(self):
         """multiprocessing.Lock() still works when both shims are active."""

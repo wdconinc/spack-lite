@@ -22,7 +22,7 @@ Modules patched
 11. lzma            — raises LZMAError on use (no WASM lzma available by default)
 12. fake executables — stub files in /usr/bin so which_string() finds git/gcc/etc.
 13. _multiprocessing — stub C extension; SemLock backed by threading primitives
-14. _posixshmem     — stub C extension; shm_open/shm_unlink raise OSError
+14. _posixshmem     — stub C extension; shm_open/shm_unlink raise OSError(ENOSYS)
 
 Git operations
 --------------
@@ -920,15 +920,16 @@ except ImportError:
 try:
     import _posixshmem  # noqa: F401 — already present (CPython); nothing to do
 except ImportError:
+    import errno as _errno
     import types
 
     _shmem_stub = types.ModuleType("_posixshmem")
 
     def _shm_open(name, flags, mode=0o600):
-        raise OSError("POSIX shared memory is not available in the Pyodide/WASM environment")
+        raise OSError(_errno.ENOSYS, "Function not implemented")
 
     def _shm_unlink(name):
-        raise OSError("POSIX shared memory is not available in the Pyodide/WASM environment")
+        raise OSError(_errno.ENOSYS, "Function not implemented")
 
     _shmem_stub.shm_open = _shm_open
     _shmem_stub.shm_unlink = _shm_unlink

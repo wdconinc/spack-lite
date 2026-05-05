@@ -22,6 +22,7 @@ Modules patched
 11. lzma            — raises LZMAError on use (no WASM lzma available by default)
 12. fake executables — stub files in /usr/bin so which_string() finds git/gcc/etc.
 13. _multiprocessing — stub C extension; SemLock backed by threading primitives
+14. _posixshmem     — stub C extension; shm_open/shm_unlink raise OSError(ENOSYS)
 
 Git operations
 --------------
@@ -893,5 +894,53 @@ except ImportError:
     if "multiprocessing" not in sys.modules:
         try:
             import multiprocessing  # noqa: F401
+        except Exception:
+            pass  # Will be resolved when user code actually imports it
+
+# ---------------------------------------------------------------------------
+# 14.  Patch _posixshmem (C extension removed from Pyodide stdlib)
+#
+#      Pyodide removes _posixshmem because POSIX shared memory (shm_open /
+#      shm_unlink) cannot be mapped onto browser APIs.  multiprocessing's
+#      shared_memory sub-module imports _posixshmem unconditionally at module
+#      level, which means any import of multiprocessing.shared_memory — or
+#      of multiprocessing.managers (which does `from . import shared_memory`)
+#      — will fail with the "removed from the Python standard library" error.
+#
+#      Strategy: register a minimal stub for _posixshmem before the first
+#      import of multiprocessing.shared_memory.  The stub exposes shm_open
+#      and shm_unlink (the only two symbols consumed by shared_memory.py)
+#      but raises OSError on use, since actual shared-memory segments are
+#      not available in the WASM environment.  This lets the import chain
+#      succeed so that multiprocessing.managers can load (setting
+#      HAS_SHMEM = True but SharedMemoryManager will fail only if actually
+#      used), and Spack's concretizer path works without triggering shared
+#      memory allocation.
+# ---------------------------------------------------------------------------
+try:
+    import _posixshmem  # noqa: F401 — already present (CPython); nothing to do
+except ImportError:
+    import errno as _errno
+    import types
+
+    _shmem_stub = types.ModuleType("_posixshmem")
+
+    def _shm_open(name, flags, mode=0o600):
+        raise OSError(_errno.ENOSYS, "Function not implemented")
+
+    def _shm_unlink(name):
+        raise OSError(_errno.ENOSYS, "Function not implemented")
+
+    _shmem_stub.shm_open = _shm_open
+    _shmem_stub.shm_unlink = _shm_unlink
+
+    sys.modules["_posixshmem"] = _shmem_stub
+
+    # Pre-import multiprocessing.shared_memory so it initialises against the
+    # stub now registered in sys.modules.  managers.py wraps this import in
+    # try/except ImportError, so this pre-import is belt-and-suspenders.
+    if "multiprocessing.shared_memory" not in sys.modules:
+        try:
+            import multiprocessing.shared_memory  # noqa: F401
         except Exception:
             pass  # Will be resolved when user code actually imports it

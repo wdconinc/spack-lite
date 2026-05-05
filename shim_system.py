@@ -997,21 +997,30 @@ except OSError as _pipe_err:
                 to use the fd with OS-level select/poll.
                 """
 
-                def __init__(self, q):
-                    self._q = q
+                def __init__(self, read_q, write_q):
+                    self._read_q = read_q    # SimpleQueue we read from, or None
+                    self._write_q = write_q  # SimpleQueue we write to, or None
                     self._peek = []  # one-item lookahead buffer for poll()
 
                 def send_bytes(self, buf, offset=0, size=None):
+                    if self._write_q is None:
+                        raise OSError("connection is read-only")
                     if size is not None:
                         buf = buf[offset: offset + size]
                     elif offset:
                         buf = buf[offset:]
-                    self._q.put(bytes(buf))
+                    self._write_q.put(bytes(buf))
 
                 def recv_bytes(self, maxlength=-1):
+                    if self._read_q is None:
+                        raise OSError("connection is write-only")
                     if self._peek:
-                        return self._peek.pop(0)
-                    return self._q.get()
+                        data = self._peek.pop(0)
+                    else:
+                        data = self._read_q.get()
+                    if maxlength >= 0 and len(data) > maxlength:
+                        raise OSError("Message too long: %d > %d" % (len(data), maxlength))
+                    return data
 
                 def send(self, obj):
                     import pickle as _pickle
@@ -1022,13 +1031,15 @@ except OSError as _pipe_err:
                     return _pickle.loads(self.recv_bytes())
 
                 def poll(self, timeout=0):
+                    if self._read_q is None:
+                        return False
                     if self._peek:
                         return True
                     try:
                         if timeout == 0:
-                            item = self._q.get_nowait()
+                            item = self._read_q.get_nowait()
                         else:
-                            item = self._q.get(timeout=timeout)
+                            item = self._read_q.get(timeout=timeout)
                         self._peek.append(item)
                         return True
                     except _queue_mod.Empty:
@@ -1047,12 +1058,26 @@ except OSError as _pipe_err:
                     self.close()
 
             def _queue_Pipe(duplex=True):
-                """os.pipe()-free Pipe() for WASM/Pyodide environments."""
-                q = _queue_mod.SimpleQueue()
-                # Both ends share the same queue; for the half-duplex case
-                # the caller only writes to one end and reads from the other,
-                # so sharing a single queue is correct.
-                return _QueueConnection(q), _QueueConnection(q)
+                """os.pipe()-free Pipe() for WASM/Pyodide environments.
+
+                For duplex=False (half-duplex): returns (reader, writer) where
+                reader is read-only and writer is write-only — matching the
+                standard Pipe(duplex=False) contract.
+
+                For duplex=True (bidirectional): each end has its own receive
+                queue so messages sent from one end are not visible to the
+                same end (matches the standard Pipe(duplex=True) contract).
+                """
+                if duplex:
+                    # Two channels: q1 carries a→b, q2 carries b→a
+                    q1 = _queue_mod.SimpleQueue()
+                    q2 = _queue_mod.SimpleQueue()
+                    # end_a reads from q2 (b→a), writes to q1 (a→b)
+                    # end_b reads from q1 (a→b), writes to q2 (b→a)
+                    return _QueueConnection(q2, q1), _QueueConnection(q1, q2)
+                else:
+                    q = _queue_mod.SimpleQueue()
+                    return _QueueConnection(q, None), _QueueConnection(None, q)
 
             _mp_conn_mod.Pipe = _queue_Pipe
 

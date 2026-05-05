@@ -348,8 +348,25 @@ class TestOsPipeShim:
         assert r.returncode == 0, r.stderr
         assert r.stdout.strip() == "ok"
 
+    def test_resource_tracker_semaphore_no_raise(self):
+        """Creating a multiprocessing.Semaphore must not raise OSError(52) via resource_tracker.
+
+        Without the resource-tracker no-op patch, SemLock.__init__ calls
+        resource_tracker.register() which calls ensure_running() which calls os.pipe().
+        This test verifies the shim prevents that failure.
+        """
+        r = _run_ospipe_shim_script(
+            "import multiprocessing\n"
+            "sem = multiprocessing.Semaphore(1)\n"
+            "sem.acquire()\n"
+            "sem.release()\n"
+            "print('ok')\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "ok"
+
     def test_queue_connection_send_recv(self):
-        """The queue-backed connection can round-trip bytes."""
+        """The queue-backed connection can round-trip bytes (duplex=False)."""
         r = _run_ospipe_shim_script(
             "import multiprocessing.connection as mc\n"
             "r, w = mc.Pipe(duplex=False)\n"
@@ -358,6 +375,37 @@ class TestOsPipeShim:
         )
         assert r.returncode == 0, r.stderr
         assert r.stdout.strip() == "b'hello'"
+
+    def test_duplex_true_separate_channels(self):
+        """duplex=True: each end has its own receive channel (no self-loopback)."""
+        r = _run_ospipe_shim_script(
+            "import multiprocessing.connection as mc\n"
+            "a, b = mc.Pipe(duplex=True)\n"
+            "a.send_bytes(b'from-a')\n"
+            "b.send_bytes(b'from-b')\n"
+            "# b receives what a sent, a receives what b sent\n"
+            "print(b.recv_bytes())\n"
+            "print(a.recv_bytes())\n"
+        )
+        assert r.returncode == 0, r.stderr
+        lines = r.stdout.strip().splitlines()
+        assert lines[0] == "b'from-a'"
+        assert lines[1] == "b'from-b'"
+
+    def test_recv_bytes_maxlength_exceeded(self):
+        """recv_bytes(maxlength) must raise OSError when the message is too long."""
+        r = _run_ospipe_shim_script(
+            "import multiprocessing.connection as mc\n"
+            "r, w = mc.Pipe(duplex=False)\n"
+            "w.send_bytes(b'toolongmessage')\n"
+            "try:\n"
+            "    r.recv_bytes(maxlength=4)\n"
+            "    print('no-error')\n"
+            "except OSError:\n"
+            "    print('raised')\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "raised"
 
     def test_queue_connection_poll_empty(self):
         """poll() returns False on an empty connection."""

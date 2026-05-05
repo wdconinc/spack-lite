@@ -505,27 +505,35 @@ def _cmd_find(args, stdin):
 def _spack_python_is_interactive(rest):
     """Return True if 'spack python <rest>' would start an interactive REPL.
 
-    Interactive mode is triggered when there is no -c flag and no positional
-    script argument.  The -i flag alone still results in interactive mode.
+    CPython enters interactive mode when no arguments are given, or when -i is
+    passed (which forces a REPL even after executing -c or a script).  Without
+    -i, a -c snippet or positional script suppresses the REPL.
     """
+    has_i = False
+    has_code_or_script = False
     skip_next = False
+    past_double_dash = False
+
     for arg in rest:
         if skip_next:
             skip_next = False
             continue
-        if arg == '-c':
-            # -c <code> → not interactive
-            return False
-        if arg.startswith('-c') and len(arg) > 2:
-            # -c<code> combined form → not interactive
-            return False
-        if not arg.startswith('-'):
-            # positional: script file → not interactive
-            return False
+        if past_double_dash:
+            has_code_or_script = True
+            break
         if arg == '--':
-            # everything after '--' is positional
-            return False
-    return True
+            past_double_dash = True
+        elif arg == '-i':
+            has_i = True
+        elif arg == '-c':
+            has_code_or_script = True
+            skip_next = True  # next arg is the code snippet, not a script
+        elif arg.startswith('-c') and len(arg) > 2:
+            has_code_or_script = True  # -cCODE combined form, no extra arg
+        elif not arg.startswith('-'):
+            has_code_or_script = True  # positional script
+
+    return has_i or not has_code_or_script
 
 
 def _cmd_spack(args, stdin):

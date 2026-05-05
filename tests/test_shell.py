@@ -8,7 +8,6 @@ mirroring the browser's Pyodide environment.
 
 import importlib.util
 import os
-import sys
 
 import pytest
 from helpers import run_in_shell
@@ -42,9 +41,13 @@ class TestSpackPythonIsInteractive:
     def test_script_arg_not_interactive(self):
         assert _spack_python_is_interactive(['script.py']) is False
 
-    def test_dash_i_with_script_not_interactive(self):
-        # -i script.py: still has a positional arg → not detected as interactive
-        assert _spack_python_is_interactive(['-i', 'script.py']) is False
+    def test_dash_i_with_script_is_interactive(self):
+        # -i script.py: -i forces interactive mode after running the script
+        assert _spack_python_is_interactive(['-i', 'script.py']) is True
+
+    def test_dash_i_with_dash_c_is_interactive(self):
+        # -i -c "code": -i forces interactive mode after executing the code
+        assert _spack_python_is_interactive(['-i', '-c', 'print(1)']) is True
 
     def test_double_dash_separator_not_interactive(self):
         # -- terminates flag processing; anything after is positional
@@ -294,6 +297,17 @@ class TestSpackPython:
     def test_interactive_dash_i_shows_helpful_message(self, spack_root):
         """'spack python -i' alone (no script) should also avoid ESPIPE."""
         r = run_in_shell("spack python -i", extra_env={"SPACK_ROOT": spack_root})
+        assert r.returncode == 0
+        assert "Errno 29" not in r.stdout
+        assert "I/O error" not in r.stdout
+        assert _SPACK_PYTHON_INTERACTIVE_MSG in r.stdout
+
+    def test_interactive_dash_i_dash_c_shows_helpful_message(self, spack_root):
+        """'spack python -i -c ...' forces a REPL after running code; must not hit ESPIPE."""
+        r = run_in_shell(
+            'spack python -i -c "import spack"',
+            extra_env={"SPACK_ROOT": spack_root},
+        )
         assert r.returncode == 0
         assert "Errno 29" not in r.stdout
         assert "I/O error" not in r.stdout

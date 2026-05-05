@@ -502,6 +502,32 @@ def _cmd_find(args, stdin):
     return '\n'.join(out) + '\n' if out else ''
 
 
+def _spack_python_is_interactive(rest):
+    """Return True if 'spack python <rest>' would start an interactive REPL.
+
+    Interactive mode is triggered when there is no -c flag and no positional
+    script argument.  The -i flag alone still results in interactive mode.
+    """
+    skip_next = False
+    for arg in rest:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == '-c':
+            # -c <code> → not interactive
+            return False
+        if arg.startswith('-c') and len(arg) > 2:
+            # -c<code> combined form → not interactive
+            return False
+        if not arg.startswith('-'):
+            # positional: script file → not interactive
+            return False
+        if arg == '--':
+            # everything after '--' is positional
+            return False
+    return True
+
+
 def _cmd_spack(args, stdin):
     """Route spack sub-commands through the Spack Python API."""
     try:
@@ -515,12 +541,29 @@ def _cmd_spack(args, stdin):
     if not args:
         return "Usage: spack <command> [options]\nTry 'spack help' for available commands.\n"
 
+    # Interactive 'spack python' is not supported in the browser: Pyodide's
+    # stdin fd does not support seek, so code.interact() raises ESPIPE.
+    # Detect this case early and return a helpful message.
+    if args[0] == 'python' and _spack_python_is_interactive(args[1:]):
+        return (
+            "Interactive Python is not supported in browser mode.\n"
+            "Use 'spack python -c \"<code>\"' to run Python code.\n"
+            "Example: spack python -c"
+            " \"import spack; print(spack.spack_version)\"\n"
+        )
+
     buf = _ShellBuffer()
     old_stdout = sys.stdout
     old_stderr = sys.stderr
+    old_stdin = sys.stdin
     try:
         sys.stdout = buf
         sys.stderr = buf
+        # Replace sys.stdin with a StringIO so that any spack command that
+        # reads from stdin (e.g. 'spack python -c …' using input()) receives
+        # the piped input rather than the raw C-level fd, which in Pyodide
+        # does not support seek and raises OSError(ESPIPE).
+        sys.stdin = io.StringIO(stdin or '')
         try:
             cmd = SpackCommand(args[0])
             cmd(*args[1:])
@@ -533,6 +576,7 @@ def _cmd_spack(args, stdin):
     finally:
         sys.stdout = old_stdout
         sys.stderr = old_stderr
+        sys.stdin = old_stdin
     return buf.getvalue()
 
 

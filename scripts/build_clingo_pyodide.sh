@@ -139,15 +139,23 @@ patches = [
         '#pragma once\n',
         '#pragma once\n#include <string>\n#include <string_view>\n',
     ),
-    # 3. logger.hh uses std::ostringstream::view() (C++20, absent from
+    # 3. Several files call std::ostringstream::view() (C++20, absent from
     #    Emscripten 3.1.46's libc++).  Replace with str() which returns
     #    std::string — implicitly convertible to std::string_view at the call.
+    #    Patch each known variable-name spelling separately.
     (
-        'logger.hh: out_.view() → out_.str()',
+        '.view() → .str(): out_ variant (logger.hh)',
         ('.hh', '.h', '.cc', '.cpp', '.cxx'),
         None,
         'out_.view()',
         'out_.str()',
+    ),
+    (
+        '.view() → .str(): oss variant (profile.hh)',
+        ('.hh', '.h', '.cc', '.cpp', '.cxx'),
+        None,
+        'oss.view()',
+        'oss.str()',
     ),
     # 4. clasp_output.cpp uses std::ostream but only has it forward-declared
     #    (via <iosfwd>).  Insert a full <ostream> include so that

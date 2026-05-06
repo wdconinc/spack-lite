@@ -468,6 +468,63 @@ export PATH="${NINJA_WRAPPER_DIR}:${PATH}"
 log "Ninja wrapper installed (adds -k 0): ${NINJA_WRAPPER_DIR}/ninja"
 
 # ---------------------------------------------------------------------------
+# Step 4c: Wrap em++ with a response-file shim to avoid E2BIG.
+#          pyodide-build's compiler shim expands .a archives into individual
+#          WASM bitcode files before calling em++; with many large archives
+#          the resulting argument list can exceed Linux's ARG_MAX (~2 MB).
+#          Emscripten 3.1.46 supports @file response files (expand_response_files
+#          in tools/utils.py).  We replace the emsdk em++ in-place with a
+#          thin Python wrapper that writes the argument list to a temp file
+#          and calls the real em++ via '@file' when the list is large.
+#          Replacing in-place (rather than a PATH-based shadow) ensures the
+#          wrapper is called even when pyodide-build hard-codes the em++ path.
+# ---------------------------------------------------------------------------
+EMPP_REAL="$(command -v em++)"
+EMPP_REAL_BACKUP="${EMPP_REAL}.real"
+log "Installing em++ response-file wrapper (real: ${EMPP_REAL}) …"
+if [[ ! -f "${EMPP_REAL_BACKUP}" ]]; then
+  cp "${EMPP_REAL}" "${EMPP_REAL_BACKUP}"
+fi
+python3 - "${EMPP_REAL}" "${EMPP_REAL_BACKUP}" << 'EMPP_WRAPPER_EOF'
+import sys, os
+real_empp = sys.argv[1]
+real_backup = sys.argv[2]
+wrapper = '''\
+#!/usr/bin/env python3
+# em++ response-file wrapper — avoids E2BIG (Argument list too long).
+# Emscripten 3.1.46 supports @file response files via expand_response_files.
+import sys, os, subprocess, tempfile
+_REAL = REAL_PLACEHOLDER
+# Use a response file when the argument list exceeds this threshold to stay
+# safely below the Linux ARG_MAX minus typical environment-variable overhead.
+_RSP_THRESHOLD = 400_000  # bytes
+_args = sys.argv[1:]
+if sum(len(a) + 1 for a in _args) > _RSP_THRESHOLD:
+    with tempfile.NamedTemporaryFile(
+            mode='w', suffix='.rsp', delete=False,
+            prefix='empp_rsp_') as _f:
+        for _a in _args:
+            _f.write(_a + '\\n')
+        _rsp = _f.name
+    try:
+        _r = subprocess.run([_REAL, '@' + _rsp], check=False)
+        sys.exit(_r.returncode)
+    finally:
+        try:
+            os.unlink(_rsp)
+        except Exception:
+            pass
+else:
+    os.execv(_REAL, [_REAL] + _args)
+'''
+wrapper = wrapper.replace('REAL_PLACEHOLDER', repr(real_backup))
+with open(real_empp, 'w') as f:
+    f.write(wrapper)
+os.chmod(real_empp, 0o755)
+print(f'[build_clingo_pyodide] em++ response-file wrapper installed at: {real_empp}')
+EMPP_WRAPPER_EOF
+
+# ---------------------------------------------------------------------------
 # Step 5: Build the wheel
 # ---------------------------------------------------------------------------
 log "Building clingo Pyodide wheel …"

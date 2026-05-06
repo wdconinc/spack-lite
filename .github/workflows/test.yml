@@ -80,7 +80,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install ccache
-        run: sudo apt-get install -y ccache
+        run: |
+          sudo apt-get install -y ccache
+          # Pre-create the cache directory so the save step doesn't warn
+          # "path does not exist" when the build fails before any ccache hit.
+          mkdir -p ~/.ccache
 
       - name: Restore ccache objects
         uses: actions/cache/restore@v4

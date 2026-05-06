@@ -15,14 +15,17 @@
 # Environment variables:
 #   CLINGO_BRANCH    Branch/tag of potassco/clingo to clone.  Default: wip-20
 #   PYODIDE_VERSION  Pyodide version the wheel must target.   Default: 0.25.1
+#   EMSDK_DIR        Directory for the Emscripten SDK clone.  Default: /tmp/emsdk
 #
 # What this script does:
 #   1. Clones (or reuses) the clingo source at CLINGO_BRANCH.
-#   2. Installs pyodide-build at the matching PYODIDE_VERSION so that the
-#      cross-compilation environment (Emscripten SDK) is automatically
-#      downloaded and configured.
-#   3. Runs `pyodide build` inside the clingo source tree.
-#   4. Copies the resulting .whl to OUTPUT_DIR.
+#   2. Installs pyodide-build at the matching PYODIDE_VERSION.
+#   3. Installs the Pyodide cross-build environment inside the clingo source
+#      tree (pyodide-build resolves '.pyodide-xbuildenv' relative to CWD).
+#   4. Installs the Emscripten SDK via emsdk at the version required by the
+#      chosen Pyodide release (pyodide-build requires emcc in PATH).
+#   5. Runs `pyodide build` inside the clingo source tree.
+#   6. Copies the resulting .whl to OUTPUT_DIR.
 #
 # The produced wheel can be installed into a running Pyodide environment via
 # micropip.install('<url>/clingo.whl') before Spack is imported, which
@@ -38,6 +41,9 @@ CLINGO_REPO="${1:-/tmp/clingo-src}"
 OUTPUT_DIR="${2:-/tmp/clingo-wheel}"
 CLINGO_BRANCH="${CLINGO_BRANCH:-wip-20}"
 PYODIDE_VERSION="${PYODIDE_VERSION:-0.25.1}"
+# Directory where the Emscripten SDK (emsdk) will be cloned/cached.
+# Override via environment variable to reuse an existing installation.
+EMSDK_DIR="${EMSDK_DIR:-/tmp/emsdk}"
 
 # ---------------------------------------------------------------------------
 log() { echo "[build_clingo_pyodide] $*"; }
@@ -62,29 +68,56 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 2: Install pyodide-build at the version matching our Pyodide target
-#         so it downloads the correct Emscripten SDK automatically.
+# Step 2: Install pyodide-build at the version matching our Pyodide target.
 # ---------------------------------------------------------------------------
 log "Installing pyodide-build==${PYODIDE_VERSION} …"
 pip install --quiet "pyodide-build==${PYODIDE_VERSION}"
 
 # ---------------------------------------------------------------------------
-# Step 3: Build the wheel
+# Step 3: Install the Pyodide cross-build environment inside the clingo
+#         source tree.  pyodide-build resolves '.pyodide-xbuildenv' relative
+#         to CWD, so it must live inside CLINGO_REPO when 'pyodide build' runs.
+# ---------------------------------------------------------------------------
+log "Setting up Pyodide cross-build environment for Pyodide ${PYODIDE_VERSION} …"
+(cd "${CLINGO_REPO}" && pyodide xbuildenv install --download)
+
+# ---------------------------------------------------------------------------
+# Step 4: Install the Emscripten SDK.
+#         The pyodide xbuildenv does NOT bundle the Emscripten toolchain —
+#         pyodide-build requires 'emcc' to be available in PATH.
+#         Read the required version from the xbuildenv's Makefile.envs so
+#         this stays in sync automatically if PYODIDE_VERSION is bumped.
+# ---------------------------------------------------------------------------
+EMSCRIPTEN_VERSION=$(awk '/PYODIDE_EMSCRIPTEN_VERSION/ {print $NF}' \
+    "${CLINGO_REPO}/.pyodide-xbuildenv/xbuildenv/pyodide-root/Makefile.envs")
+log "Installing Emscripten ${EMSCRIPTEN_VERSION} (required by Pyodide ${PYODIDE_VERSION}) …"
+
+if [[ ! -d "${EMSDK_DIR}/.git" ]]; then
+  log "Cloning emsdk into ${EMSDK_DIR} …"
+  git clone --depth 1 https://github.com/emscripten-core/emsdk.git "${EMSDK_DIR}"
+fi
+"${EMSDK_DIR}/emsdk" install "${EMSCRIPTEN_VERSION}"
+"${EMSDK_DIR}/emsdk" activate "${EMSCRIPTEN_VERSION}"
+# Source emsdk_env.sh to add emcc (and clang) to PATH.
+# Temporarily relax strict-mode flags because emsdk_env.sh may reference
+# variables that are unset in a non-login shell environment.
+set +eu
+# shellcheck disable=SC1091
+source "${EMSDK_DIR}/emsdk_env.sh"
+set -eu
+
+# ---------------------------------------------------------------------------
+# Step 5: Build the wheel
 # ---------------------------------------------------------------------------
 log "Building clingo Pyodide wheel …"
 mkdir -p "${OUTPUT_DIR}"
 (
   cd "${CLINGO_REPO}"
-  # pyodide-build looks for '.pyodide-xbuildenv' relative to CWD, so the
-  # xbuildenv (which bundles the Emscripten SDK) must be installed here,
-  # inside the package source tree, before calling 'pyodide build'.
-  log "Setting up Pyodide cross-build environment for Pyodide ${PYODIDE_VERSION} …"
-  pyodide xbuildenv install --download
   pyodide build --output-directory "${OUTPUT_DIR}"
 )
 
 # ---------------------------------------------------------------------------
-# Step 4: Report what we produced
+# Step 6: Report what we produced
 # ---------------------------------------------------------------------------
 # Use nullglob so the array is empty (not literally '*.whl') when no file exists.
 shopt -s nullglob

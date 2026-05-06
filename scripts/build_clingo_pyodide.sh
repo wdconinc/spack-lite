@@ -70,6 +70,54 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Step 1b: Patch clingo sources for Emscripten libc++ compatibility.
+#          std::lexicographical_compare_three_way (C++20) is absent from the
+#          cached sysroot headers in some Emscripten releases (e.g. 3.1.46).
+#          Replace each call site with an equivalent lambda so the build
+#          succeeds without altering clingo's logic.
+# ---------------------------------------------------------------------------
+log "Patching clingo sources for Emscripten libc++ compatibility …"
+python3 - "${CLINGO_REPO}" <<'PYEOF'
+import os, sys
+
+root = sys.argv[1]
+# Exact call pattern used in the clingo wip-20 headers.
+OLD = 'std::lexicographical_compare_three_way(lhs.begin(), lhs.end(), rhs.begin(), rhs.end())'
+# Equivalent C++20 lambda that does not rely on the missing stdlib function.
+NEW = (
+    '[&](){'
+    'auto _b1=lhs.begin(),_e1=lhs.end();'
+    'auto _b2=rhs.begin(),_e2=rhs.end();'
+    'using _O=decltype(*_b1<=>*_b2);'
+    'for(;_b1!=_e1&&_b2!=_e2;++_b1,++_b2)'
+    'if(_O _c=(*_b1<=>*_b2);_c!=0)return _c;'
+    'if(_b1==_e1&&_b2==_e2)return _O(0<=>0);'
+    'return _b1==_e1?_O(-1<=>0):_O(1<=>0);'
+    '}()'
+)
+
+count = 0
+for dirpath, _, filenames in os.walk(root):
+    for fn in filenames:
+        if not fn.endswith(('.hh', '.h', '.cc', '.cpp', '.cxx')):
+            continue
+        path = os.path.join(dirpath, fn)
+        try:
+            with open(path) as f:
+                src = f.read()
+        except Exception:
+            continue
+        if OLD not in src:
+            continue
+        with open(path, 'w') as f:
+            f.write(src.replace(OLD, NEW))
+        print(f"  patched: {path}")
+        count += 1
+if count == 0:
+    print("  no files needed patching")
+PYEOF
+
+# ---------------------------------------------------------------------------
 # Step 2: Install pyodide-build at the version matching our Pyodide target.
 # ---------------------------------------------------------------------------
 log "Installing pyodide-build==${PYODIDE_VERSION} …"

@@ -134,12 +134,27 @@ patches = [
     #    <string> is needed because value_hash(std::string const&) calls
     #    std::hash<std::string_view>{}(x) which requires a complete std::string
     #    type for the implicit std::string→std::string_view conversion.
+    #    <filesystem> is needed, and std::hash<std::filesystem::path> must be
+    #    added because Emscripten 3.1.46's libc++ does not provide this
+    #    specialization (it falls through to the deleted __enum_hash<path>).
     (
-        'hash.hh: add #include <string> and <string_view> before namespace',
+        'hash.hh: add includes and std::hash<filesystem::path> specialization',
         ('.hh', '.h'),
         'hash.hh',
         '#pragma once\n',
-        '#pragma once\n#include <string>\n#include <string_view>\n',
+        (
+            '#pragma once\n'
+            '#include <filesystem>\n'
+            '#include <string>\n'
+            '#include <string_view>\n'
+            'namespace std {\n'
+            'template<> struct hash<filesystem::path> {\n'
+            '    size_t operator()(filesystem::path const& p) const noexcept {\n'
+            '        return hash<string>{}(p.string());\n'
+            '    }\n'
+            '};\n'
+            '} // namespace std\n'
+        ),
     ),
     # 3. Several files call std::ostringstream::view() (C++20, absent from
     #    Emscripten 3.1.46's libc++).  Replace with str() which returns

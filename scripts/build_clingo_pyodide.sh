@@ -344,6 +344,39 @@ patches = [
          '    }\n'
          '});'),
     ),
+    # 10. Disable LTO/IPO to avoid "Argument list too long" (E2BIG) in the
+    #     Emscripten em++ link step.  When -flto=auto is active, Emscripten's
+    #     Python wrapper expands all bitcode from .a archives into individual
+    #     command-line arguments before calling the underlying LLVM linker,
+    #     exceeding the OS ARG_MAX limit (~2 MB on Linux).
+    #     Inject cmake code into the root CMakeLists.txt (after project()) to:
+    #       (a) strip -flto flags from the cmake string-flag variables that the
+    #           pyodide-build toolchain may have set, and
+    #       (b) force CMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF (with CACHE FORCE)
+    #           so cmake's own IPO mechanism does not re-add them for any target.
+    #     fn_filter='CMakeLists.txt' limits candidates to CMakeLists.txt files;
+    #     the regex anchors on 'project(clingo' so only the root file matches.
+    (
+        'CMakeLists.txt: disable LTO/IPO (E2BIG fix)',
+        ('.txt',),
+        'CMakeLists.txt',
+        r'(?si)(project\s*\(\s*clingo[^)]*\))',
+        (r'\1\n'
+         r'# Emscripten compat: disable LTO/IPO to prevent E2BIG in em++ link.\n'
+         r'# The pyodide-build toolchain injects -flto=auto into cmake flag\n'
+         r'# variables; strip it here (CMakeLists.txt runs after the toolchain)\n'
+         r'# and force IPO off so no target re-enables it.\n'
+         r'foreach(_em_lto_v CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_RELEASE\n'
+         r'        CMAKE_SHARED_LINKER_FLAGS CMAKE_MODULE_LINKER_FLAGS\n'
+         r'        CMAKE_EXE_LINKER_FLAGS)\n'
+         r'  if(DEFINED ${_em_lto_v})\n'
+         r'    string(REGEX REPLACE "-flto[^ ]*" "" ${_em_lto_v} "${${_em_lto_v}}")\n'
+         r'  endif()\n'
+         r'endforeach()\n'
+         r'set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)\n'
+         r'set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF CACHE BOOL "" FORCE)'),
+        True,  # is_regex
+    ),
 ]
 
 total = 0
@@ -439,6 +472,11 @@ log "Ninja wrapper installed (adds -k 0): ${NINJA_WRAPPER_DIR}/ninja"
 # ---------------------------------------------------------------------------
 log "Building clingo Pyodide wheel …"
 mkdir -p "${OUTPUT_DIR}"
+# Belt-and-suspenders: tell cmake to disable IPO/LTO via env var in case the
+# build frontend respects CMAKE_ARGS (scikit-build-core does).  The primary
+# fix is the CMakeLists.txt patch above; this guards against any frontend that
+# re-enables LTO before the patch takes effect.
+export CMAKE_ARGS="${CMAKE_ARGS:-} -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF"
 (
   cd "${CLINGO_REPO}"
   pyodide build --outdir "${OUTPUT_DIR}"

@@ -113,7 +113,7 @@ log "Building clingo Pyodide wheel …"
 mkdir -p "${OUTPUT_DIR}"
 (
   cd "${CLINGO_REPO}"
-  pyodide build --output-directory "${OUTPUT_DIR}"
+  pyodide build --outdir "${OUTPUT_DIR}"
 )
 
 # ---------------------------------------------------------------------------

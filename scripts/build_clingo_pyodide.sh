@@ -322,15 +322,27 @@ patches = [
     ),
     # 9. ast.cc:1647: generic visitor lambda returns x <=> other.cast<...>() but
     #    different AST node types yield different ordering categories (strong vs
-    #    weak), so the compiler can't deduce a single return type.  Fix by adding
-    #    an explicit return type '-> std::partial_ordering' so all ordering types
-    #    implicitly convert to partial_ordering.
+    #    partial), and the enclosing operator<=> has return type std::strong_ordering.
+    #    Emscripten 3.1.46's libc++ lacks operator<=> for std::pair (returns
+    #    partial_ordering) and doesn't implicit-convert partial→strong.
+    #    Fix: explicit -> std::strong_ordering; use if constexpr to fall back to
+    #    operator< for types whose <=> returns partial_ordering or is absent.
     (
-        'ast.cc: add explicit -> std::partial_ordering to visitor lambda',
+        'ast.cc: visitor lambda → std::strong_ordering via if constexpr',
         ('.cc', '.cpp', '.cxx'),
         None,
         'return visit([&other](auto const &x) { return x <=> other.cast<std::decay_t<decltype(x)>>(); });',
-        'return visit([&other](auto const &x) -> std::partial_ordering { return x <=> other.cast<std::decay_t<decltype(x)>>(); });',
+        ('return visit([&other](auto const &x) -> std::strong_ordering {\n'
+         '    using T = std::decay_t<decltype(x)>;\n'
+         '    const auto &y = other.cast<T>();\n'
+         '    if constexpr (requires { { x <=> y } -> std::convertible_to<std::strong_ordering>; }) {\n'
+         '        return x <=> y;\n'
+         '    } else {\n'
+         '        if (x < y) return std::strong_ordering::less;\n'
+         '        if (y < x) return std::strong_ordering::greater;\n'
+         '        return std::strong_ordering::equal;\n'
+         '    }\n'
+         '});'),
     ),
 ]
 

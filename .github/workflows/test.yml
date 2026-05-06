@@ -67,3 +67,17 @@ jobs:
           pytest tests/ -v --timeout=300
         env:
           SPACK_ROOT: ${{ env.SPACK_ROOT }}
+
+  build-wheel:
+    name: Build clingo Pyodide wheel
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build clingo Pyodide wheel
+        env:
+          # Must match the Pyodide version pinned in worker.js (PYODIDE_CDN)
+          PYODIDE_VERSION: "0.25.1"
+          CLINGO_BRANCH: wip-20
+        run: bash scripts/build_clingo_pyodide.sh

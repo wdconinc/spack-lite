@@ -68,11 +68,6 @@ fi
 log "Installing pyodide-build==${PYODIDE_VERSION} …"
 pip install --quiet "pyodide-build==${PYODIDE_VERSION}"
 
-# Download (or reuse a cached) cross-compilation environment that bundles the
-# Emscripten SDK pinned to what Pyodide ${PYODIDE_VERSION} was built with.
-log "Setting up Pyodide cross-build environment for Pyodide ${PYODIDE_VERSION} …"
-pyodide xbuildenv install --download
-
 # ---------------------------------------------------------------------------
 # Step 3: Build the wheel
 # ---------------------------------------------------------------------------
@@ -80,6 +75,11 @@ log "Building clingo Pyodide wheel …"
 mkdir -p "${OUTPUT_DIR}"
 (
   cd "${CLINGO_REPO}"
+  # pyodide-build looks for '.pyodide-xbuildenv' relative to CWD, so the
+  # xbuildenv (which bundles the Emscripten SDK) must be installed here,
+  # inside the package source tree, before calling 'pyodide build'.
+  log "Setting up Pyodide cross-build environment for Pyodide ${PYODIDE_VERSION} …"
+  pyodide xbuildenv install --download
   pyodide build --output-directory "${OUTPUT_DIR}"
 )
 

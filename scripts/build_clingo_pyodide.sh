@@ -232,6 +232,46 @@ patches = [
         ),
         True,  # is_regex
     ),
+    # 7. record.hh:160 uses <=> directly on field values whose types may not
+    #    have operator<=> in Emscripten 3.1.46's libc++ sysroot (e.g.
+    #    std::optional<std::variant<...>> and std::vector<std::pair<...>>).
+    #    Step 7a: inject an _em_compat::cmp3 helper at the top of record.hh
+    #    (before any namespace) that tries <=> first and falls back to < when
+    #    <=> is not available.  fn_filter ensures we only touch record.hh.
+    (
+        'record.hh: add _em_compat::cmp3 helper for missing <=>',
+        ('.hh', '.h'),
+        'record.hh',
+        '#pragma once\n',
+        (
+            '#pragma once\n'
+            '#include <compare>\n'
+            'namespace _em_compat {\n'
+            'template<typename T>\n'
+            'inline std::strong_ordering cmp3(T const &a, T const &b) {\n'
+            '    if constexpr (requires { a <=> b; }) {\n'
+            '        auto r = (a <=> b);\n'
+            '        if (r < 0) return std::strong_ordering::less;\n'
+            '        if (r > 0) return std::strong_ordering::greater;\n'
+            '        return std::strong_ordering::equal;\n'
+            '    } else {\n'
+            '        if (a < b) return std::strong_ordering::less;\n'
+            '        if (b < a) return std::strong_ordering::greater;\n'
+            '        return std::strong_ordering::equal;\n'
+            '    }\n'
+            '}\n'
+            '} // namespace _em_compat\n'
+        ),
+    ),
+    # 7b. Replace the direct <=> in Comp::compare with _em_compat::cmp3 so
+    #     types without operator<=> use the < fallback defined above.
+    (
+        'record.hh: use _em_compat::cmp3 in Comp::compare instead of <=>',
+        ('.hh', '.h'),
+        'record.hh',
+        'if (auto comp = a.template get_value<Tag>() <=> b.template get_value<Tag>(); comp != 0) {',
+        'if (auto comp = ::_em_compat::cmp3(a.template get_value<Tag>(), b.template get_value<Tag>()); comp != 0) {',
+    ),
 ]
 
 total = 0

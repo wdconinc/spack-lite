@@ -78,12 +78,14 @@ fi
 # ---------------------------------------------------------------------------
 log "Patching clingo sources for Emscripten libc++ compatibility …"
 python3 - "${CLINGO_REPO}" <<'PYEOF'
-import os, sys
+import os, re, sys
 
 root = sys.argv[1]
 
 # ---------------------------------------------------------------------------
-# Patch table: list of (description, file_glob, old_text, new_text) tuples.
+# Patch table: list of (desc, exts, fn_filter, old, new[, is_regex]) tuples.
+# When is_regex is True, old is a compiled-regex pattern applied with
+# re.sub(old, new, src, flags=re.DOTALL); otherwise plain str.replace.
 # ---------------------------------------------------------------------------
 patches = [
     # 1a. std::lexicographical_compare_three_way is absent from Emscripten
@@ -190,13 +192,40 @@ patches = [
         'for (auto x : std::ranges::join_view(std::array{sum, SumView{last, last != nullptr}})) {',
         'for (auto& _jr : std::array{sum, SumView{last, last != nullptr}}) for (auto x : _jr) {',
     ),
+    # 1c. 5-argument form of lexicographical_compare_three_way with an explicit
+    #     comparator lambda (used in lib/ground/src/term.cc and theory_term.cc).
+    #     The call spans two source lines so we use a regex with DOTALL to match
+    #     regardless of indentation.
+    (
+        'lexicographical_compare_three_way (args_ 5-arg) → inline lambda',
+        ('.hh', '.h', '.cc', '.cpp', '.cxx'),
+        None,
+        (
+            r'std::lexicographical_compare_three_way\('
+            r'args_\.begin\(\), args_\.end\(\), x->args_\.begin\(\), x->args_\.end\(\),'
+            r'\s*\[\]\(auto const &a, auto const &b\) \{ return \*a <=> \*b; \}\)'
+        ),
+        (
+            '[&](){'
+            'auto _b1=args_.begin(),_e1=args_.end();'
+            'auto _b2=x->args_.begin(),_e2=x->args_.end();'
+            'using _O=decltype(*(*_b1)<=>*(*_b2));'
+            'for(;_b1!=_e1&&_b2!=_e2;++_b1,++_b2)'
+            '{if(_O _c=(*(*_b1)<=>*(*_b2));_c!=0)return _c;}'
+            'if(_b1==_e1&&_b2==_e2)return _O(0<=>0);'
+            'return _b1==_e1?_O(-1<=>0):_O(1<=>0);}()'
+        ),
+        True,  # is_regex
+    ),
 ]
 
 total = 0
 for dirpath, _, filenames in os.walk(root):
     for fn in filenames:
         path = os.path.join(dirpath, fn)
-        for desc, exts, fn_filter, old, new in patches:
+        for entry in patches:
+            desc, exts, fn_filter, old, new = entry[:5]
+            is_regex = entry[5] if len(entry) > 5 else False
             if not fn.endswith(exts):
                 continue
             if fn_filter is not None and fn != fn_filter:
@@ -206,10 +235,16 @@ for dirpath, _, filenames in os.walk(root):
                     src = f.read()
             except Exception:
                 continue
-            if old not in src:
-                continue
+            if is_regex:
+                new_src = re.sub(old, new, src, flags=re.DOTALL)
+                if new_src == src:
+                    continue
+            else:
+                if old not in src:
+                    continue
+                new_src = src.replace(old, new)
             with open(path, 'w') as f:
-                f.write(src.replace(old, new))
+                f.write(new_src)
             print(f"  [{desc}] patched: {path}")
             total += 1
 if total == 0:
@@ -254,6 +289,23 @@ set +eu
 # shellcheck disable=SC1091
 source "${EMSDK_DIR}/emsdk_env.sh"
 set -eu
+
+# ---------------------------------------------------------------------------
+# Step 4b: Wrap ninja so the build keeps going on errors (-k 0).
+#          cmake invokes the native build tool via the absolute path it finds
+#          in PATH during configure; create a thin wrapper BEFORE configure so
+#          cmake caches the wrapper path and uses it for all builds.
+# ---------------------------------------------------------------------------
+NINJA_REAL="$(command -v ninja)"
+NINJA_WRAPPER_DIR="/tmp/ninja-keep-going"
+mkdir -p "${NINJA_WRAPPER_DIR}"
+cat > "${NINJA_WRAPPER_DIR}/ninja" << NINJA_EOF
+#!/bin/bash
+exec "${NINJA_REAL}" -k 0 "\$@"
+NINJA_EOF
+chmod +x "${NINJA_WRAPPER_DIR}/ninja"
+export PATH="${NINJA_WRAPPER_DIR}:${PATH}"
+log "Ninja wrapper installed (adds -k 0): ${NINJA_WRAPPER_DIR}/ninja"
 
 # ---------------------------------------------------------------------------
 # Step 5: Build the wheel

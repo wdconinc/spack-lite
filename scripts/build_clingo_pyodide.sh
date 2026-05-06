@@ -234,10 +234,15 @@ patches = [
     ),
     # 7. record.hh:160 uses <=> directly on field values whose types may not
     #    have operator<=> in Emscripten 3.1.46's libc++ sysroot (e.g.
-    #    std::optional<std::variant<...>> and std::vector<std::pair<...>>).
+    #    std::optional<std::variant<...>>, std::vector<std::pair<...>>, and
+    #    std::span<const CppClingo::String> which has neither <=> nor <).
     #    Step 7a: inject an _em_compat::cmp3 helper at the top of record.hh
-    #    (before any namespace) that tries <=> first and falls back to < when
-    #    <=> is not available.  fn_filter ensures we only touch record.hh.
+    #    (before any namespace) with three branches:
+    #      1. Use <=> directly when the type supports it.
+    #      2. Fall back to < when < is available (std::optional, std::vector).
+    #      3. Fall back to element-wise <=> for ranges like std::span whose
+    #         elements have <=> even though the container itself doesn't.
+    #    fn_filter ensures we only touch record.hh.
     (
         'record.hh: add _em_compat::cmp3 helper for missing <=>',
         ('.hh', '.h'),
@@ -254,9 +259,24 @@ patches = [
             '        if (r < 0) return std::strong_ordering::less;\n'
             '        if (r > 0) return std::strong_ordering::greater;\n'
             '        return std::strong_ordering::equal;\n'
-            '    } else {\n'
+            '    } else if constexpr (requires { a < b; }) {\n'
             '        if (a < b) return std::strong_ordering::less;\n'
             '        if (b < a) return std::strong_ordering::greater;\n'
+            '        return std::strong_ordering::equal;\n'
+            '    } else if constexpr (requires {\n'
+            '            a.begin(); a.end();\n'
+            '            (*a.begin()) <=> (*a.begin()); }) {\n'
+            '        auto _i1 = a.begin(), _e1 = a.end();\n'
+            '        auto _i2 = b.begin(), _e2 = b.end();\n'
+            '        for (; _i1 != _e1 && _i2 != _e2; ++_i1, ++_i2) {\n'
+            '            auto _c = (*_i1) <=> (*_i2);\n'
+            '            if (_c < 0) return std::strong_ordering::less;\n'
+            '            if (_c > 0) return std::strong_ordering::greater;\n'
+            '        }\n'
+            '        if (_i1 == _e1 && _i2 == _e2) return std::strong_ordering::equal;\n'
+            '        return _i1 == _e1 ?\n'
+            '            std::strong_ordering::less : std::strong_ordering::greater;\n'
+            '    } else {\n'
             '        return std::strong_ordering::equal;\n'
             '    }\n'
             '}\n'

@@ -56,7 +56,9 @@ if [[ ! -d "${CLINGO_REPO}/.git" || ! -f "${CLINGO_REPO}/pyproject.toml" ]]; the
   git clone --depth 1 --branch "${CLINGO_BRANCH}" \
       https://github.com/potassco/clingo.git "${CLINGO_REPO}"
   # The wip-20 repo uses git submodules for third-party deps (clasp, re2c, etc.)
-  git -C "${CLINGO_REPO}" submodule update --init --depth 1
+  # --recursive is required so nested sub-submodules (e.g. clasp/libpotassco/amc)
+  # are also initialised and CMake can find them at configure time.
+  git -C "${CLINGO_REPO}" submodule update --init --recursive --depth 1
 else
   log "Using existing clingo source at ${CLINGO_REPO}"
   # Ensure we are on the correct branch and the tree is up to date.
@@ -64,7 +66,7 @@ else
   git -C "${CLINGO_REPO}" fetch origin "${CLINGO_BRANCH}"
   git -C "${CLINGO_REPO}" checkout "${CLINGO_BRANCH}"
   # Always refresh submodules so missing content doesn't cause build failures.
-  git -C "${CLINGO_REPO}" submodule update --init --depth 1
+  git -C "${CLINGO_REPO}" submodule update --init --recursive --depth 1
 fi
 
 # ---------------------------------------------------------------------------

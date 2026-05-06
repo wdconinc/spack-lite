@@ -292,6 +292,46 @@ patches = [
         'if (auto comp = a.template get_value<Tag>() <=> b.template get_value<Tag>(); comp != 0) {',
         'if (auto comp = ::_em_compat::cmp3(a.template get_value<Tag>(), b.template get_value<Tag>()); comp != 0) {',
     ),
+    # 1d. 4-arg lexicographical_compare_three_way using 'elems_'/'x->elems_' names
+    #     (used in lib/ground/src/term.cc).
+    (
+        'lexicographical_compare_three_way (elems_/x->elems_) → inline lambda',
+        ('.hh', '.h', '.cc', '.cpp', '.cxx'),
+        None,
+        'std::lexicographical_compare_three_way(elems_.begin(), elems_.end(), x->elems_.begin(), x->elems_.end())',
+        (
+            '[&](){'
+            'auto _b1=elems_.begin(),_e1=elems_.end();'
+            'auto _b2=x->elems_.begin(),_e2=x->elems_.end();'
+            'using _O=decltype(*_b1<=>*_b2);'
+            'for(;_b1!=_e1&&_b2!=_e2;++_b1,++_b2)'
+            'if(_O _c=(*_b1<=>*_b2);_c!=0)return _c;'
+            'if(_b1==_e1&&_b2==_e2)return _O(0<=>0);'
+            'return _b1==_e1?_O(-1<=>0):_O(1<=>0);'
+            '}()'
+        ),
+    ),
+    # 8. grounder.cc uses buf_.view() (std::ostringstream::view(), C++20, absent
+    #    from Emscripten 3.1.46's libc++).  Replace with buf_.str().
+    (
+        '.view() → .str(): buf_ variant (grounder.cc)',
+        ('.hh', '.h', '.cc', '.cpp', '.cxx'),
+        None,
+        'buf_.view()',
+        'buf_.str()',
+    ),
+    # 9. ast.cc:1647: generic visitor lambda returns x <=> other.cast<...>() but
+    #    different AST node types yield different ordering categories (strong vs
+    #    weak), so the compiler can't deduce a single return type.  Fix by adding
+    #    an explicit return type '-> std::partial_ordering' so all ordering types
+    #    implicitly convert to partial_ordering.
+    (
+        'ast.cc: add explicit -> std::partial_ordering to visitor lambda',
+        ('.cc', '.cpp', '.cxx'),
+        None,
+        'return visit([&other](auto const &x) { return x <=> other.cast<std::decay_t<decltype(x)>>(); });',
+        'return visit([&other](auto const &x) -> std::partial_ordering { return x <=> other.cast<std::decay_t<decltype(x)>>(); });',
+    ),
 ]
 
 total = 0

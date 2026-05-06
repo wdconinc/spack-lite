@@ -78,42 +78,84 @@ fi
 # ---------------------------------------------------------------------------
 log "Patching clingo sources for Emscripten libc++ compatibility …"
 python3 - "${CLINGO_REPO}" <<'PYEOF'
-import os, sys
+import os, re, sys
 
 root = sys.argv[1]
-# Exact call pattern used in the clingo wip-20 headers.
-OLD = 'std::lexicographical_compare_three_way(lhs.begin(), lhs.end(), rhs.begin(), rhs.end())'
-# Equivalent C++20 lambda that does not rely on the missing stdlib function.
-NEW = (
-    '[&](){'
-    'auto _b1=lhs.begin(),_e1=lhs.end();'
-    'auto _b2=rhs.begin(),_e2=rhs.end();'
-    'using _O=decltype(*_b1<=>*_b2);'
-    'for(;_b1!=_e1&&_b2!=_e2;++_b1,++_b2)'
-    'if(_O _c=(*_b1<=>*_b2);_c!=0)return _c;'
-    'if(_b1==_e1&&_b2==_e2)return _O(0<=>0);'
-    'return _b1==_e1?_O(-1<=>0):_O(1<=>0);'
-    '}()'
-)
 
-count = 0
+# ---------------------------------------------------------------------------
+# Patch table: list of (description, file_glob, old_text, new_text) tuples.
+# ---------------------------------------------------------------------------
+patches = [
+    # 1. std::lexicographical_compare_three_way is absent from Emscripten
+    #    3.1.46's libc++ sysroot headers.  Replace with an equivalent lambda
+    #    that only uses the C++20 spaceship operator (which IS present).
+    (
+        'lexicographical_compare_three_way → inline lambda',
+        ('.hh', '.h', '.cc', '.cpp', '.cxx'),
+        'std::lexicographical_compare_three_way(lhs.begin(), lhs.end(), rhs.begin(), rhs.end())',
+        (
+            '[&](){'
+            'auto _b1=lhs.begin(),_e1=lhs.end();'
+            'auto _b2=rhs.begin(),_e2=rhs.end();'
+            'using _O=decltype(*_b1<=>*_b2);'
+            'for(;_b1!=_e1&&_b2!=_e2;++_b1,++_b2)'
+            'if(_O _c=(*_b1<=>*_b2);_c!=0)return _c;'
+            'if(_b1==_e1&&_b2==_e2)return _O(0<=>0);'
+            'return _b1==_e1?_O(-1<=>0):_O(1<=>0);'
+            '}()'
+        ),
+    ),
+    # 2. clasp_output.cpp uses std::ostream but only has it forward-declared
+    #    (via <iosfwd>).  Insert a full <ostream> include so that
+    #    basic_ostream's member functions (operator<< etc.) are available.
+    (
+        'clasp_output.cpp: add #include <ostream>',
+        ('.cpp',),
+        '#include <clasp/cli/clasp_output.h>',
+        '#include <ostream>\n#include <clasp/cli/clasp_output.h>',
+    ),
+    # 3. clasp_output.cpp: (*ostream << s) is used in bool context, which
+    #    Emscripten 3.1.46's libc++ does not support here.  Separate the
+    #    write from the return so no bool conversion is needed.
+    (
+        'clasp_output.cpp: ostream bool conversion → statement + return',
+        ('.cpp',),
+        'return (*static_cast<std::ostream*>(o) << s) ? s.size() : 0;',
+        '(*static_cast<std::ostream*>(o) << s); return s.size();',
+    ),
+    # 4. std::ranges::join_view is absent from Emscripten 3.1.46's libc++.
+    #    Replace the single join_view for-loop header with two nested for
+    #    headers that produce identical iteration without join_view.  The
+    #    original loop body's opening '{' stays as-is, so one closing '}'
+    #    still terminates the (now inner) loop, and the outer loop ends
+    #    naturally — i.e. the rest of the file requires no further change.
+    (
+        'clasp_output.cpp: join_view → nested for loops',
+        ('.cpp',),
+        'for (auto x : std::ranges::join_view(std::array{sum, SumView{last, last != nullptr}})) {',
+        'for (auto& _jr : std::array{sum, SumView{last, last != nullptr}}) for (auto x : _jr) {',
+    ),
+]
+
+total = 0
 for dirpath, _, filenames in os.walk(root):
     for fn in filenames:
-        if not fn.endswith(('.hh', '.h', '.cc', '.cpp', '.cxx')):
-            continue
         path = os.path.join(dirpath, fn)
-        try:
-            with open(path) as f:
-                src = f.read()
-        except Exception:
-            continue
-        if OLD not in src:
-            continue
-        with open(path, 'w') as f:
-            f.write(src.replace(OLD, NEW))
-        print(f"  patched: {path}")
-        count += 1
-if count == 0:
+        for desc, exts, old, new in patches:
+            if not fn.endswith(exts):
+                continue
+            try:
+                with open(path) as f:
+                    src = f.read()
+            except Exception:
+                continue
+            if old not in src:
+                continue
+            with open(path, 'w') as f:
+                f.write(src.replace(old, new))
+            print(f"  [{desc}] patched: {path}")
+            total += 1
+if total == 0:
     print("  no files needed patching")
 PYEOF
 

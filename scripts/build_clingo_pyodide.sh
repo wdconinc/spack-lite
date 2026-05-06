@@ -127,14 +127,14 @@ patches = [
     ),
     # 2. hash.hh uses std::string_view without including <string_view>.
     #    Emscripten 3.1.46's libc++ does not expose string_view via other
-    #    headers alone.  Prepend the missing include.  Target only hash.hh to
-    #    avoid spurious matches (fn_filter restricts application by filename).
+    #    headers alone.  The include MUST go before the namespace, so anchor
+    #    on #pragma once (filename-filtered to hash.hh to avoid false matches).
     (
-        'hash.hh: add #include <string_view>',
+        'hash.hh: add #include <string_view> before namespace',
         ('.hh', '.h'),
         'hash.hh',
-        'auto value_hash(std::string_view const &x) -> size_t;',
-        '#include <string_view>\nauto value_hash(std::string_view const &x) -> size_t;',
+        '#pragma once\n',
+        '#pragma once\n#include <string_view>\n',
     ),
     # 3. logger.hh uses std::ostringstream::view() (C++20, absent from
     #    Emscripten 3.1.46's libc++).  Replace with str() which returns

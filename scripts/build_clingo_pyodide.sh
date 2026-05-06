@@ -125,16 +125,19 @@ patches = [
             '}()'
         ),
     ),
-    # 2. hash.hh uses std::string_view without including <string_view>.
-    #    Emscripten 3.1.46's libc++ does not expose string_view via other
-    #    headers alone.  The include MUST go before the namespace, so anchor
-    #    on #pragma once (filename-filtered to hash.hh to avoid false matches).
+    # 2. hash.hh uses std::string_view and std::string without including their
+    #    headers.  Emscripten 3.1.46's libc++ does not pull them in transitively.
+    #    Both includes MUST go before the namespace, so anchor on #pragma once
+    #    (filename-filtered to hash.hh to avoid false matches).
+    #    <string> is needed because value_hash(std::string const&) calls
+    #    std::hash<std::string_view>{}(x) which requires a complete std::string
+    #    type for the implicit std::string→std::string_view conversion.
     (
-        'hash.hh: add #include <string_view> before namespace',
+        'hash.hh: add #include <string> and <string_view> before namespace',
         ('.hh', '.h'),
         'hash.hh',
         '#pragma once\n',
-        '#pragma once\n#include <string_view>\n',
+        '#pragma once\n#include <string>\n#include <string_view>\n',
     ),
     # 3. logger.hh uses std::ostringstream::view() (C++20, absent from
     #    Emscripten 3.1.46's libc++).  Replace with str() which returns

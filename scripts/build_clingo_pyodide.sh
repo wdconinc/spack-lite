@@ -478,23 +478,32 @@ log "Ninja wrapper installed (adds -k 0): ${NINJA_WRAPPER_DIR}/ninja"
 #          and calls the real em++ via '@file' when the list is large.
 #          Replacing in-place (rather than a PATH-based shadow) ensures the
 #          wrapper is called even when pyodide-build hard-codes the em++ path.
+#
+#          IMPORTANT: In emsdk 3.1.46, the 'em++' file is a Python launcher
+#          that appends '.py' to sys.argv[0] to find the implementation.
+#          If we back it up as 'em++.real', it would then look for
+#          'em++.real.py' (which doesn't exist).  Instead, we find 'em++.py'
+#          (the actual Python implementation in the same directory) and call
+#          it directly from the wrapper — no backup needed.
 # ---------------------------------------------------------------------------
 EMPP_REAL="$(command -v em++)"
-EMPP_REAL_BACKUP="${EMPP_REAL}.real"
-log "Installing em++ response-file wrapper (real: ${EMPP_REAL}) …"
-if [[ ! -f "${EMPP_REAL_BACKUP}" ]]; then
-  cp "${EMPP_REAL}" "${EMPP_REAL_BACKUP}"
-fi
-python3 - "${EMPP_REAL}" "${EMPP_REAL_BACKUP}" << 'EMPP_WRAPPER_EOF'
+EMPP_DIR="$(dirname "${EMPP_REAL}")"
+EMPP_PY="${EMPP_DIR}/em++.py"
+log "Installing em++ response-file wrapper (em++: ${EMPP_REAL}, em++.py: ${EMPP_PY}) …"
+if [[ ! -f "${EMPP_PY}" ]]; then
+  log "WARNING: ${EMPP_PY} not found — skipping em++ wrapper (E2BIG may occur at link time)"
+else
+python3 - "${EMPP_REAL}" "${EMPP_PY}" << 'EMPP_WRAPPER_EOF'
 import sys, os
-real_empp = sys.argv[1]
-real_backup = sys.argv[2]
+real_empp = sys.argv[1]   # path to em++ launcher (to be replaced in-place)
+empp_py   = sys.argv[2]   # path to em++.py (real Python implementation)
 wrapper = '''\
 #!/usr/bin/env python3
 # em++ response-file wrapper — avoids E2BIG (Argument list too long).
-# Emscripten 3.1.46 supports @file response files via expand_response_files.
+# Calls em++.py directly; never invokes the original em++ launcher so the
+# em++/em++.real -> em++.real.py bootstrap chain is bypassed entirely.
 import sys, os, subprocess, tempfile
-_REAL = REAL_PLACEHOLDER
+_PY = EMPP_PY_PLACEHOLDER
 # Use a response file when the argument list exceeds this threshold to stay
 # safely below the Linux ARG_MAX minus typical environment-variable overhead.
 _RSP_THRESHOLD = 400_000  # bytes
@@ -507,7 +516,7 @@ if sum(len(a) + 1 for a in _args) > _RSP_THRESHOLD:
             _f.write(_a + '\\n')
         _rsp = _f.name
     try:
-        _r = subprocess.run([_REAL, '@' + _rsp], check=False)
+        _r = subprocess.run([sys.executable, _PY, '@' + _rsp], check=False)
         sys.exit(_r.returncode)
     finally:
         try:
@@ -515,14 +524,15 @@ if sum(len(a) + 1 for a in _args) > _RSP_THRESHOLD:
         except Exception:
             pass
 else:
-    os.execv(_REAL, [_REAL] + _args)
+    os.execv(sys.executable, [sys.executable, _PY] + _args)
 '''
-wrapper = wrapper.replace('REAL_PLACEHOLDER', repr(real_backup))
+wrapper = wrapper.replace('EMPP_PY_PLACEHOLDER', repr(empp_py))
 with open(real_empp, 'w') as f:
     f.write(wrapper)
 os.chmod(real_empp, 0o755)
-print(f'[build_clingo_pyodide] em++ response-file wrapper installed at: {real_empp}')
+print(f'[build_clingo_pyodide] em++ response-file wrapper installed at {real_empp}; calls {empp_py}')
 EMPP_WRAPPER_EOF
+fi
 
 # ---------------------------------------------------------------------------
 # Step 5: Build the wheel

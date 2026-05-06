@@ -78,7 +78,7 @@ fi
 # ---------------------------------------------------------------------------
 log "Patching clingo sources for Emscripten libc++ compatibility …"
 python3 - "${CLINGO_REPO}" <<'PYEOF'
-import os, re, sys
+import os, sys
 
 root = sys.argv[1]
 
@@ -86,12 +86,14 @@ root = sys.argv[1]
 # Patch table: list of (description, file_glob, old_text, new_text) tuples.
 # ---------------------------------------------------------------------------
 patches = [
-    # 1. std::lexicographical_compare_three_way is absent from Emscripten
-    #    3.1.46's libc++ sysroot headers.  Replace with an equivalent lambda
-    #    that only uses the C++20 spaceship operator (which IS present).
+    # 1a. std::lexicographical_compare_three_way is absent from Emscripten
+    #     3.1.46's libc++ sysroot headers.  Replace with an equivalent lambda
+    #     that only uses the C++20 spaceship operator (which IS present).
+    #     Variant using 'lhs'/'rhs' parameter names (used in clasp/potassco).
     (
-        'lexicographical_compare_three_way → inline lambda',
+        'lexicographical_compare_three_way (lhs/rhs) → inline lambda',
         ('.hh', '.h', '.cc', '.cpp', '.cxx'),
+        None,
         'std::lexicographical_compare_three_way(lhs.begin(), lhs.end(), rhs.begin(), rhs.end())',
         (
             '[&](){'
@@ -105,25 +107,66 @@ patches = [
             '}()'
         ),
     ),
-    # 2. clasp_output.cpp uses std::ostream but only has it forward-declared
+    # 1b. Same as 1a but using 'a'/'b' parameter names (used in record.hh).
+    (
+        'lexicographical_compare_three_way (a/b) → inline lambda',
+        ('.hh', '.h', '.cc', '.cpp', '.cxx'),
+        None,
+        'std::lexicographical_compare_three_way(a.begin(), a.end(), b.begin(), b.end())',
+        (
+            '[&](){'
+            'auto _b1=a.begin(),_e1=a.end();'
+            'auto _b2=b.begin(),_e2=b.end();'
+            'using _O=decltype(*_b1<=>*_b2);'
+            'for(;_b1!=_e1&&_b2!=_e2;++_b1,++_b2)'
+            'if(_O _c=(*_b1<=>*_b2);_c!=0)return _c;'
+            'if(_b1==_e1&&_b2==_e2)return _O(0<=>0);'
+            'return _b1==_e1?_O(-1<=>0):_O(1<=>0);'
+            '}()'
+        ),
+    ),
+    # 2. hash.hh uses std::string_view without including <string_view>.
+    #    Emscripten 3.1.46's libc++ does not expose string_view via other
+    #    headers alone.  Prepend the missing include.  Target only hash.hh to
+    #    avoid spurious matches (fn_filter restricts application by filename).
+    (
+        'hash.hh: add #include <string_view>',
+        ('.hh', '.h'),
+        'hash.hh',
+        'auto value_hash(std::string_view const &x) -> size_t;',
+        '#include <string_view>\nauto value_hash(std::string_view const &x) -> size_t;',
+    ),
+    # 3. logger.hh uses std::ostringstream::view() (C++20, absent from
+    #    Emscripten 3.1.46's libc++).  Replace with str() which returns
+    #    std::string — implicitly convertible to std::string_view at the call.
+    (
+        'logger.hh: out_.view() → out_.str()',
+        ('.hh', '.h', '.cc', '.cpp', '.cxx'),
+        None,
+        'out_.view()',
+        'out_.str()',
+    ),
+    # 4. clasp_output.cpp uses std::ostream but only has it forward-declared
     #    (via <iosfwd>).  Insert a full <ostream> include so that
     #    basic_ostream's member functions (operator<< etc.) are available.
     (
         'clasp_output.cpp: add #include <ostream>',
         ('.cpp',),
+        None,
         '#include <clasp/cli/clasp_output.h>',
         '#include <ostream>\n#include <clasp/cli/clasp_output.h>',
     ),
-    # 3. clasp_output.cpp: (*ostream << s) is used in bool context, which
+    # 5. clasp_output.cpp: (*ostream << s) is used in bool context, which
     #    Emscripten 3.1.46's libc++ does not support here.  Separate the
     #    write from the return so no bool conversion is needed.
     (
         'clasp_output.cpp: ostream bool conversion → statement + return',
         ('.cpp',),
+        None,
         'return (*static_cast<std::ostream*>(o) << s) ? s.size() : 0;',
         '(*static_cast<std::ostream*>(o) << s); return s.size();',
     ),
-    # 4. std::ranges::join_view is absent from Emscripten 3.1.46's libc++.
+    # 6. std::ranges::join_view is absent from Emscripten 3.1.46's libc++.
     #    Replace the single join_view for-loop header with two nested for
     #    headers that produce identical iteration without join_view.  The
     #    original loop body's opening '{' stays as-is, so one closing '}'
@@ -132,6 +175,7 @@ patches = [
     (
         'clasp_output.cpp: join_view → nested for loops',
         ('.cpp',),
+        None,
         'for (auto x : std::ranges::join_view(std::array{sum, SumView{last, last != nullptr}})) {',
         'for (auto& _jr : std::array{sum, SumView{last, last != nullptr}}) for (auto x : _jr) {',
     ),
@@ -141,8 +185,10 @@ total = 0
 for dirpath, _, filenames in os.walk(root):
     for fn in filenames:
         path = os.path.join(dirpath, fn)
-        for desc, exts, old, new in patches:
+        for desc, exts, fn_filter, old, new in patches:
             if not fn.endswith(exts):
+                continue
+            if fn_filter is not None and fn != fn_filter:
                 continue
             try:
                 with open(path) as f:

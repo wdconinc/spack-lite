@@ -71,7 +71,7 @@ pip install --quiet "pyodide-build==${PYODIDE_VERSION}"
 # Download (or reuse a cached) cross-compilation environment that bundles the
 # Emscripten SDK pinned to what Pyodide ${PYODIDE_VERSION} was built with.
 log "Setting up Pyodide cross-build environment for Pyodide ${PYODIDE_VERSION} …"
-pyodide xbuildenv install --version "${PYODIDE_VERSION}"
+pyodide xbuildenv install --download
 
 # ---------------------------------------------------------------------------
 # Step 3: Build the wheel

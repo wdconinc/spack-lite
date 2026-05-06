@@ -418,6 +418,67 @@ log "Installing pyodide-build==${PYODIDE_VERSION} …"
 pip install --quiet "pyodide-build==${PYODIDE_VERSION}"
 
 # ---------------------------------------------------------------------------
+# Step 2b: Patch pyodide_build/pywasmcross.py to use response files.
+#           pyodide-build's compiler shim (handle_command) calls
+#           subprocess.run(new_args) where new_args[0]='em++'.  When
+#           clingo is linked, pyodide-build expands .a archives into hundreds
+#           of individual WASM bitcode files; the resulting arg list can exceed
+#           Linux's ARG_MAX (~2 MB), causing execve to fail with E2BIG *before*
+#           em++ is even invoked — so an em++ wrapper cannot help.
+#           The fix is applied at the source of the problem: pywasmcross.py's
+#           handle_command() is patched to write a @response-file and call
+#           em++ with just '@file' instead of the full arg list.
+#           Emscripten 3.1.46 supports response files via expand_response_files.
+#           The patch is in-place; pypabuild.py copies pywasmcross.py into the
+#           per-build tmpdir, so any copy made after this patch is also fixed.
+# ---------------------------------------------------------------------------
+log "Patching pyodide_build/pywasmcross.py for response-file support …"
+python3 - <<'PYEOF'
+import importlib.util, pathlib, sys
+
+spec = importlib.util.find_spec("pyodide_build.pywasmcross")
+if spec is None or spec.origin is None:
+    print("  pyodide_build.pywasmcross not found — skipping patch")
+    sys.exit(0)
+
+src_path = pathlib.Path(spec.origin)
+src = src_path.read_text()
+
+OLD = "    result = subprocess.run(new_args)\n    return result.returncode"
+NEW = """\
+    # Use a response file when the arg list exceeds ARG_MAX to avoid E2BIG.
+    # pyodide-build expands .a archives into individual bitcode paths before
+    # calling em++; with large libraries this can exceed Linux's ~2 MB limit.
+    # Emscripten 3.1.46 supports @file response files (expand_response_files).
+    _arg_total = sum(len(a) + 1 for a in new_args[1:])
+    if _arg_total > 400_000:
+        import tempfile as _tf
+        with _tf.NamedTemporaryFile(
+            mode='w', suffix='.rsp', delete=False, prefix='empp_rsp_'
+        ) as _rf:
+            for _a in new_args[1:]:
+                _rf.write(_a + '\\n')
+            _rsp = _rf.name
+        try:
+            result = subprocess.run([new_args[0], '@' + _rsp])
+        finally:
+            try:
+                os.unlink(_rsp)
+            except Exception:
+                pass
+    else:
+        result = subprocess.run(new_args)
+    return result.returncode"""
+
+if OLD not in src:
+    print(f"  pattern not found in {src_path} — already patched or version mismatch")
+    sys.exit(0)
+
+src_path.write_text(src.replace(OLD, NEW, 1))
+print(f"  patched {src_path}")
+PYEOF
+
+# ---------------------------------------------------------------------------
 # Step 3: Install the Pyodide cross-build environment inside the clingo
 #         source tree.  pyodide-build resolves '.pyodide-xbuildenv' relative
 #         to CWD, so it must live inside CLINGO_REPO when 'pyodide build' runs.

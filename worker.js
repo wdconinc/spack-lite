@@ -113,6 +113,16 @@ config:
   db_lock_timeout: 60
 `;
 
+const CONCRETIZER_YAML = `\
+concretizer:
+  # Do not attempt to reuse previously installed packages from the spack
+  # database.  In the browser/Pyodide environment no packages are actually
+  # installed, so reuse is always false.  More importantly, spack develop
+  # (2025+) requires libc information for compiler packages when reusing;
+  # the fake gcc stub cannot provide that, causing concretization failures.
+  reuse: false
+`;
+
 // ---------------------------------------------------------------------------
 // Filesystem helpers (used by wasm-git ↔ Pyodide FS bridging)
 // ---------------------------------------------------------------------------
@@ -344,10 +354,11 @@ spack_cfg_linux = '/home/pyodide/.spack/linux'
 os.makedirs(spack_cfg_linux, exist_ok=True)
 
 cfg_files = {
-    '/home/pyodide/.spack/config.yaml':        ${JSON.stringify(CONFIG_YAML)},
+    '/home/pyodide/.spack/config.yaml': ${JSON.stringify(CONFIG_YAML)},
+    '/home/pyodide/.spack/concretizer.yaml': ${JSON.stringify(CONCRETIZER_YAML)},
     '/home/pyodide/.spack/linux/compilers.yaml': ${JSON.stringify(COMPILERS_YAML)},
-    '/home/pyodide/.spack/packages.yaml':       ${JSON.stringify(PACKAGES_YAML)},
-    '/home/pyodide/.spack/repos.yaml':          ${JSON.stringify(REPOS_YAML)},
+    '/home/pyodide/.spack/packages.yaml': ${JSON.stringify(PACKAGES_YAML)},
+    '/home/pyodide/.spack/repos.yaml': ${JSON.stringify(REPOS_YAML)},
 }
 for path, content in cfg_files.items():
     with open(path, 'w') as f:

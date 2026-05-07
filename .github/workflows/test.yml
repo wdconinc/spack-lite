@@ -78,6 +78,9 @@ jobs:
       - name: Load Pyodide version config
         run: cat .github/pyodide-versions.env >> "$GITHUB_ENV"
 
+      - name: Verify Pyodide version sync with worker.js
+        run: python3 scripts/check_pyodide_version_sync.py
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:

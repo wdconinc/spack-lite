@@ -78,15 +78,18 @@ import micropip.transaction as _mt
 _mt.check_compatible = lambda filename: None
 await micropip.install('emfs:///${whlFilename}', deps=False)
 
-# The wheel's .so is tagged cpython-312, but Pyodide may run Python 3.11.
-# Rename any installed clingo .so to match the running interpreter's ABI tag
-# so that the normal 'import clingo' machinery can locate it.
-import sys, os, glob, re
-running_tag = f"cpython-{sys.version_info.major}{sys.version_info.minor}"
-for f in glob.glob('/lib/python3*/site-packages/clingo*.so'):
-    new_name = re.sub(r'cpython-3\d+', running_tag, f)
-    if new_name != f and not os.path.exists(new_name):
-        os.rename(f, new_name)
+# The wheel's .so may be tagged with a different cpython version than the
+# running interpreter (e.g. cp312 wheel in a cp311 Pyodide). Load it directly
+# via importlib so the ABI-tagged filename is never matched by the normal
+# import machinery.
+import importlib.util, sys, glob
+so_files = glob.glob('/lib/python*/site-packages/clingo*.so')
+if not so_files:
+    raise ImportError("clingo .so not found under site-packages after install")
+spec = importlib.util.spec_from_file_location("clingo", so_files[0])
+mod = importlib.util.module_from_spec(spec)
+sys.modules["clingo"] = mod
+spec.loader.exec_module(mod)
 `);
 } catch (err) {
   console.error(`[smoke-test] ERROR: micropip install failed: ${err}`);

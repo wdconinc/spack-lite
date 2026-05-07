@@ -12,8 +12,10 @@
  * directory; run from the directory where `npm install pyodide` was executed.
  *
  * Tests performed:
- *   1. Import clingo and read its __version__ string.
- *   2. Solve a simple ASP program "{a}." — must yield exactly 2 models.
+ *   1. Import clingo and assert __version__ is a non-empty string.
+ *   2. Solve a simple SAT program "{a}." — must yield exactly 2 models.
+ *   3. Solve an UNSAT program "a :- not a." — must yield 0 models.
+ *   4. Pass invalid ASP syntax — clingo must raise RuntimeError.
  */
 
 import { loadPyodide } from 'pyodide';
@@ -30,16 +32,21 @@ if (!arg) {
 }
 
 let whlPath;
-const st = statSync(arg);
-if (st.isDirectory()) {
-  const whls = readdirSync(arg).filter(f => f.endsWith('.whl'));
-  if (whls.length === 0) {
-    console.error(`ERROR: no .whl file found in ${arg}`);
-    process.exit(1);
+try {
+  const st = statSync(arg);
+  if (st.isDirectory()) {
+    const whls = readdirSync(arg).filter(f => f.endsWith('.whl'));
+    if (whls.length === 0) {
+      console.error(`ERROR: no .whl file found in ${arg}`);
+      process.exit(1);
+    }
+    whlPath = resolve(arg, whls[0]);
+  } else {
+    whlPath = resolve(arg);
   }
-  whlPath = resolve(arg, whls[0]);
-} else {
-  whlPath = resolve(arg);
+} catch (err) {
+  console.error(`ERROR: cannot access path '${arg}': ${err.message}`);
+  process.exit(1);
 }
 
 console.log(`[smoke-test] Wheel: ${basename(whlPath)}`);
@@ -60,10 +67,15 @@ const whlBytes = readFileSync(whlPath);
 pyodide.FS.writeFile('/clingo.whl', whlBytes);
 
 console.log('[smoke-test] Installing clingo from emfs:///clingo.whl…');
-await pyodide.runPythonAsync(`
+try {
+  await pyodide.runPythonAsync(`
 import micropip
-await micropip.install('emfs:///clingo.whl')
+await micropip.install('emfs:///clingo.whl', deps=False)
 `);
+} catch (err) {
+  console.error(`[smoke-test] ERROR: micropip install failed: ${err}`);
+  process.exit(1);
+}
 console.log('[smoke-test] clingo installed.');
 
 // ---------------------------------------------------------------------------
@@ -74,6 +86,10 @@ import clingo
 clingo.__version__
 `);
 console.log(`[smoke-test] clingo version: ${version}`);
+if (!version || typeof version !== 'string' || version.trim() === '') {
+  console.error('[smoke-test] ERROR: clingo.__version__ is empty or undefined');
+  process.exit(1);
+}
 
 // ---------------------------------------------------------------------------
 // Smoke test 2: run a minimal ASP solve.

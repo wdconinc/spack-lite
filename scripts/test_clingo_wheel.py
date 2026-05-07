@@ -34,6 +34,12 @@ def main() -> None:
         whl = whls[0]
     else:
         whl = target
+        if not whl.exists():
+            print(f"ERROR: wheel path does not exist: {whl}", file=sys.stderr)
+            sys.exit(1)
+        if whl.suffix != ".whl":
+            print(f"ERROR: expected a .whl file, got: {whl}", file=sys.stderr)
+            sys.exit(1)
 
     print(f"Checking wheel: {whl.name}")
 

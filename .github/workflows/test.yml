@@ -115,6 +115,14 @@ jobs:
       - name: Verify wheel structure
         run: python3 scripts/test_clingo_wheel.py /tmp/clingo-wheel
 
+      - name: Set up Node.js for Pyodide smoke test
+        uses: actions/setup-node@v4
+        with:
+          # Node.js 22 has WebAssembly Exception Handling (EH) built in as a
+          # standard feature (no --experimental-wasm-eh flag needed), which is
+          # required to load the clingo WASM binary compiled with -fwasm-exceptions.
+          node-version: '22'
+
       - name: Install pyodide for wheel smoke test
         run: |
           mkdir -p /tmp/pyodide-test

@@ -123,7 +123,7 @@ jobs:
       - name: Smoke-test clingo wheel in Pyodide (Node.js)
         run: |
           cp scripts/smoke_test_clingo_pyodide.mjs /tmp/pyodide-test/
-          cd /tmp/pyodide-test && node --experimental-wasm-eh smoke_test_clingo_pyodide.mjs /tmp/clingo-wheel
+          cd /tmp/pyodide-test && node smoke_test_clingo_pyodide.mjs /tmp/clingo-wheel
 
       - name: Show ccache statistics
         if: always()

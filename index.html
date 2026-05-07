@@ -107,7 +107,7 @@ term.open(document.getElementById('terminal'));
 function updateViewportHeight() {
   const viewportHeight = window.visualViewport
     ? window.visualViewport.height
-    : window.innerHeight;
+    : document.documentElement.clientHeight;
   document.body.style.height = `${viewportHeight}px`;
 }
 
@@ -115,17 +115,21 @@ function fitTerminal() {
   fitAddon.fit();
 }
 
-updateViewportHeight();
-fitTerminal();
-window.addEventListener('resize', () => {
-  updateViewportHeight();
-  fitTerminal();
-});
-if (window.visualViewport) {
-  window.visualViewport.addEventListener('resize', () => {
+let pendingViewportFrame = null;
+function scheduleViewportUpdate() {
+  if (pendingViewportFrame !== null) return;
+  pendingViewportFrame = requestAnimationFrame(() => {
+    pendingViewportFrame = null;
     updateViewportHeight();
     fitTerminal();
   });
+}
+
+updateViewportHeight();
+fitTerminal();
+window.addEventListener('resize', scheduleViewportUpdate);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', scheduleViewportUpdate);
 }
 
 // Prevent mobile keyboards from autocorrecting / autocapitalising input,

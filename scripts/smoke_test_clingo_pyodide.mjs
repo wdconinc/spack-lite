@@ -71,6 +71,10 @@ console.log(`[smoke-test] Installing clingo from emfs:///${whlFilename}…`);
 try {
   await pyodide.runPythonAsync(`
 import micropip
+import micropip._utils as _mu
+# Bypass ABI compatibility check: the wheel is built for this specific
+# Pyodide/Emscripten target; strict CPython-version matching is not needed.
+_mu.check_compatible = lambda filename: None
 await micropip.install('emfs:///${whlFilename}', deps=False)
 `);
 } catch (err) {

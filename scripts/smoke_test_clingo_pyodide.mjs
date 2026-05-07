@@ -52,13 +52,6 @@ try {
 console.log(`[smoke-test] Wheel: ${basename(whlPath)}`);
 
 // ---------------------------------------------------------------------------
-// Load Pyodide
-// ---------------------------------------------------------------------------
-console.log('[smoke-test] Loading Pyodide…');
-const pyodide = await loadPyodide();
-console.log(`[smoke-test] Pyodide ${pyodide.version} ready.`);
-
-// ---------------------------------------------------------------------------
 // Pyodide 0.25.x workaround: inject env.__cpp_exception WebAssembly.Tag.
 //
 // pyodide-build compiles extensions with Emscripten -fwasm-exceptions, so
@@ -68,30 +61,46 @@ console.log(`[smoke-test] Pyodide ${pyodide.version} ready.`);
 //   LinkError: Import "env.__cpp_exception": tag import requires a WebAssembly.Tag
 // This was fixed in Pyodide 0.26.0.
 //
-// Workaround: monkey-patch WebAssembly.instantiate to inject the tag whenever
-// it is absent from an env import object.  We prefer the tag that Pyodide's
-// own Python runtime uses (pyodide._module.asm.__cpp_exception) so that
-// cross-module C++ exception propagation remains correct; if that is not
-// accessible we create a fresh tag, which is still sufficient for the smoke
-// tests (clingo signals Python-visible errors via PyErr_SetString rather than
-// cross-module C++ exception propagation).
+// IMPORTANT: This patch must be applied BEFORE loadPyodide() is called.
+// Emscripten's generated code inside pyodide.asm.js captures a reference to
+// WebAssembly.instantiate during module initialisation (which occurs inside
+// loadPyodide()).  Patching after loadPyodide() returns is therefore too late
+// to intercept the calls made by loadDynlib.
+//
+// We use a tag holder object so the closure always reads the latest value.
+// After loadPyodide() returns we swap the placeholder tag for the one already
+// used by Pyodide's Python runtime (pyodide._module.asm.__cpp_exception) so
+// that cross-module C++ exception propagation remains correct.
 // ---------------------------------------------------------------------------
-if (typeof WebAssembly.Tag !== 'undefined') {
-  const _pyMod = pyodide._module;
-  const _cppExTag =
-    (_pyMod?.asm?.__cpp_exception instanceof WebAssembly.Tag
-      ? _pyMod.asm.__cpp_exception
-      : null)
-    ?? new WebAssembly.Tag({ parameters: ['externref'] });
+const _cppExTagHolder = { tag: null };
+if (typeof WebAssembly?.Tag !== 'undefined') {
+  _cppExTagHolder.tag = new WebAssembly.Tag({ parameters: ['externref'] });
   const _origInstantiate = WebAssembly.instantiate;
-  WebAssembly.instantiate = function(source, importObject) {
-    if (importObject?.env &&
+  WebAssembly.instantiate = function patchedInstantiate(source, importObject) {
+    if (importObject?.env && _cppExTagHolder.tag &&
         !(importObject.env.__cpp_exception instanceof WebAssembly.Tag)) {
-      importObject.env.__cpp_exception = _cppExTag;
+      importObject.env.__cpp_exception = _cppExTagHolder.tag;
     }
     return _origInstantiate.call(WebAssembly, source, importObject);
   };
-  console.log('[smoke-test] Applied wasm-exceptions workaround (Pyodide 0.25.x).');
+  console.log('[smoke-test] Pre-patched WebAssembly.instantiate (Pyodide 0.25.x wasm-exceptions workaround).');
+}
+
+// ---------------------------------------------------------------------------
+// Load Pyodide
+// ---------------------------------------------------------------------------
+console.log('[smoke-test] Loading Pyodide…');
+const pyodide = await loadPyodide();
+console.log(`[smoke-test] Pyodide ${pyodide.version} ready.`);
+
+// After loading, prefer Pyodide's own __cpp_exception tag for better
+// cross-module C++ exception compatibility.
+if (_cppExTagHolder.tag) {
+  const pyTag = pyodide._module?.asm?.__cpp_exception;
+  if (pyTag instanceof WebAssembly.Tag) {
+    _cppExTagHolder.tag = pyTag;
+    console.log('[smoke-test] Updated wasm-exceptions tag with Pyodide\'s actual __cpp_exception tag.');
+  }
 }
 
 // ---------------------------------------------------------------------------

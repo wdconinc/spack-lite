@@ -73,11 +73,20 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Must match the Pyodide version pinned in worker.js (PYODIDE_CDN)
-      PYODIDE_VERSION: "0.25.1"
+      PYODIDE_VERSION: "0.26.4"
+      # Must match the Python version bundled in the Pyodide release above.
+      # The wheel ABI tag is derived from the host Python, so this must agree
+      # with what Pyodide ships (3.11 for 0.25.x, 3.12 for 0.26.x, …).
+      PYTHON_VERSION: "3.12"
       CLINGO_BRANCH: wip-20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install ccache
         run: |
@@ -85,6 +94,10 @@ jobs:
           # Pre-create the cache directory so the save step doesn't warn
           # "path does not exist" when the build fails before any ccache hit.
           mkdir -p ~/.ccache
+          # Emscripten's exec_process uses os.execv (not execvp), which does NOT
+          # search PATH.  Resolve ccache to its absolute path and export it so
+          # that EM_COMPILER_WRAPPER contains a full path that os.execv can find.
+          echo "EM_COMPILER_WRAPPER=$(which ccache)" >> "$GITHUB_ENV"
 
       - name: Restore ccache objects
         uses: actions/cache/restore@v4
@@ -96,12 +109,28 @@ jobs:
             ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-
 
       - name: Build clingo Pyodide wheel
-        env:
-          # Tell Emscripten to use ccache as the compiler wrapper so that
-          # unchanged C/C++ translation units are served from cache on
-          # repeated builds.
-          EM_COMPILER_WRAPPER: ccache
         run: bash scripts/build_clingo_pyodide.sh
+
+      - name: Verify wheel structure
+        run: python3 scripts/test_clingo_wheel.py /tmp/clingo-wheel
+
+      - name: Set up Node.js for Pyodide smoke test
+        uses: actions/setup-node@v4
+        with:
+          # Node.js 22 has WebAssembly Exception Handling (EH) built in as a
+          # standard feature (no --experimental-wasm-eh flag needed), which is
+          # required to load the clingo WASM binary compiled with -fwasm-exceptions.
+          node-version: '22'
+
+      - name: Install pyodide for wheel smoke test
+        run: |
+          mkdir -p /tmp/pyodide-test
+          npm install --prefix /tmp/pyodide-test pyodide@${{ env.PYODIDE_VERSION }}
+
+      - name: Smoke-test clingo wheel in Pyodide (Node.js)
+        run: |
+          cp scripts/smoke_test_clingo_pyodide.mjs /tmp/pyodide-test/
+          cd /tmp/pyodide-test && node smoke_test_clingo_pyodide.mjs /tmp/clingo-wheel
 
       - name: Show ccache statistics
         if: always()

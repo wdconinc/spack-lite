@@ -59,6 +59,42 @@ const pyodide = await loadPyodide();
 console.log(`[smoke-test] Pyodide ${pyodide.version} ready.`);
 
 // ---------------------------------------------------------------------------
+// Pyodide 0.25.x workaround: inject env.__cpp_exception WebAssembly.Tag.
+//
+// pyodide-build compiles extensions with Emscripten -fwasm-exceptions, so
+// every .so imports env.__cpp_exception as a WebAssembly.Tag.  Pyodide 0.25.x
+// has a bug where loadDynlib does not include this tag in the import object
+// it passes to WebAssembly.instantiate, producing:
+//   LinkError: Import "env.__cpp_exception": tag import requires a WebAssembly.Tag
+// This was fixed in Pyodide 0.26.0.
+//
+// Workaround: monkey-patch WebAssembly.instantiate to inject the tag whenever
+// it is absent from an env import object.  We prefer the tag that Pyodide's
+// own Python runtime uses (pyodide._module.asm.__cpp_exception) so that
+// cross-module C++ exception propagation remains correct; if that is not
+// accessible we create a fresh tag, which is still sufficient for the smoke
+// tests (clingo signals Python-visible errors via PyErr_SetString rather than
+// cross-module C++ exception propagation).
+// ---------------------------------------------------------------------------
+if (typeof WebAssembly.Tag !== 'undefined') {
+  const _pyMod = pyodide._module;
+  const _cppExTag =
+    (_pyMod?.asm?.__cpp_exception instanceof WebAssembly.Tag
+      ? _pyMod.asm.__cpp_exception
+      : null)
+    ?? new WebAssembly.Tag({ parameters: ['externref'] });
+  const _origInstantiate = WebAssembly.instantiate;
+  WebAssembly.instantiate = function(source, importObject) {
+    if (importObject?.env &&
+        !(importObject.env.__cpp_exception instanceof WebAssembly.Tag)) {
+      importObject.env.__cpp_exception = _cppExTag;
+    }
+    return _origInstantiate.call(WebAssembly, source, importObject);
+  };
+  console.log('[smoke-test] Applied wasm-exceptions workaround (Pyodide 0.25.x).');
+}
+
+// ---------------------------------------------------------------------------
 // Write the wheel into the Emscripten filesystem and install via micropip.
 // micropip supports the emfs:// scheme for files already in the pyodide FS.
 // ---------------------------------------------------------------------------

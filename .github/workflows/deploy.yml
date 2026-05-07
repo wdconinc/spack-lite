@@ -22,17 +22,15 @@ jobs:
   build:
     name: Build spack-lite archive and site
     runs-on: ubuntu-latest
-    env:
-      # Must match the Pyodide version pinned in worker.js (PYODIDE_CDN)
-      PYODIDE_VERSION: "0.25.1"
-      # Must match the Python version bundled in the Pyodide release above.
-      # The wheel ABI tag is derived from the host Python, so this must agree
-      # with what Pyodide ships (3.11 for 0.25.x, 3.12 for 0.26.x, …).
-      PYTHON_VERSION: "3.11"
-      CLINGO_BRANCH: wip-20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Load Pyodide version config
+        run: grep -E "^[A-Za-z_][A-Za-z0-9_]*=" .github/pyodide-versions.env >> "$GITHUB_ENV"
+
+      - name: Verify Pyodide version sync with worker.js
+        run: python3 scripts/check_pyodide_version_sync.py
 
       - name: Set up Python
         uses: actions/setup-python@v5

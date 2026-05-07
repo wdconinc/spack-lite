@@ -415,7 +415,9 @@ PYEOF
 # Step 2: Install pyodide-build at the version matching our Pyodide target.
 # ---------------------------------------------------------------------------
 log "Installing pyodide-build==${PYODIDE_VERSION} …"
-pip install --quiet "pyodide-build==${PYODIDE_VERSION}"
+# auditwheel_emscripten (pulled in by pyodide-build) imports wheel.cli.pack
+# which was removed in wheel>=0.44.  Pin wheel<0.44 so the import succeeds.
+pip install --quiet "pyodide-build==${PYODIDE_VERSION}" "wheel<0.44"
 
 # ---------------------------------------------------------------------------
 # Step 2b: Patch pyodide_build/pywasmcross.py to use response files.

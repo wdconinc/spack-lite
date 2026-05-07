@@ -722,7 +722,7 @@ mkdir -p "${OUTPUT_DIR}"
 # build frontend respects CMAKE_ARGS (scikit-build-core does).  The primary
 # fix is the CMakeLists.txt patch above; this guards against any frontend that
 # re-enables LTO before the patch takes effect.
-export CMAKE_ARGS="${CMAKE_ARGS:-} -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF"
+export CMAKE_ARGS="${CMAKE_ARGS:-} -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF -DCLASP_BUILD_WITH_THREADS=OFF"
 (
   cd "${CLINGO_REPO}"
   # --exports pyinit: export only the PyInit_clingo symbol.

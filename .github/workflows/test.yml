@@ -109,9 +109,6 @@ jobs:
             ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-
 
       - name: Build clingo Pyodide wheel
-        # EM_COMPILER_WRAPPER is set to the absolute path of ccache in the
-        # "Install ccache" step above (via GITHUB_ENV) because Emscripten's
-        # exec_process uses os.execv, which requires a full path (unlike execvp).
         run: bash scripts/build_clingo_pyodide.sh
 
       - name: Verify wheel structure

@@ -79,7 +79,9 @@
 // ---------------------------------------------------------------------------
 // Terminal setup
 // ---------------------------------------------------------------------------
-const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
+const isCoarsePointer =
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(pointer: coarse)').matches;
 
 const term = new Terminal({
   theme: {

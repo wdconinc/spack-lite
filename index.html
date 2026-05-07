@@ -20,6 +20,7 @@
       display: flex;
       flex-direction: column;
       height: 100vh;
+      height: 100dvh;
       overflow: hidden;
     }
 
@@ -103,8 +104,29 @@ const term = new Terminal({
 const fitAddon = new FitAddon.FitAddon();
 term.loadAddon(fitAddon);
 term.open(document.getElementById('terminal'));
-fitAddon.fit();
-window.addEventListener('resize', () => fitAddon.fit());
+function updateViewportHeight() {
+  const viewportHeight = window.visualViewport
+    ? window.visualViewport.height
+    : window.innerHeight;
+  document.body.style.height = `${viewportHeight}px`;
+}
+
+function fitTerminal() {
+  fitAddon.fit();
+}
+
+updateViewportHeight();
+fitTerminal();
+window.addEventListener('resize', () => {
+  updateViewportHeight();
+  fitTerminal();
+});
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', () => {
+    updateViewportHeight();
+    fitTerminal();
+  });
+}
 
 // Prevent mobile keyboards from autocorrecting / autocapitalising input,
 // which would garble the terminal line when space is typed after an

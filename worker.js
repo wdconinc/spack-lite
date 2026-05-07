@@ -24,7 +24,7 @@
 // ---------------------------------------------------------------------------
 // CDN URLs — pin to specific versions for reproducibility
 // ---------------------------------------------------------------------------
-const PYODIDE_CDN  = 'https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js';
+const PYODIDE_CDN  = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js';
 // wasm-git: libgit2 compiled to WebAssembly (sync browser variant).
 // Runs inside this Web Worker, which is the only context where synchronous
 // XHR (used for remote git operations) is permitted.

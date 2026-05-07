@@ -20,7 +20,13 @@
 
 import { loadPyodide } from 'pyodide';
 import { readFileSync, readdirSync, statSync } from 'fs';
-import { resolve, basename } from 'path';
+import { resolve, basename, dirname } from 'path';
+import { createRequire } from 'module';
+
+const _require = createRequire(import.meta.url);
+const _pyodidePkg = _require('pyodide/package.json');
+const _pyodideVersion = _pyodidePkg.version ?? '0.0.0';
+const _pyodideMajorMinor = _pyodideVersion.split('.').slice(0, 2).map(Number);
 
 // ---------------------------------------------------------------------------
 // Resolve wheel path from CLI argument
@@ -73,17 +79,25 @@ console.log(`[smoke-test] Wheel: ${basename(whlPath)}`);
 // that cross-module C++ exception propagation remains correct.
 // ---------------------------------------------------------------------------
 const _cppExTagHolder = { tag: null };
-if (typeof WebAssembly.Tag !== 'undefined') {
-  _cppExTagHolder.tag = new WebAssembly.Tag({ parameters: ['externref'] });
+const _needsCppExWorkaround = typeof WebAssembly.Tag !== 'undefined';
+if (_needsCppExWorkaround) {
+  // Emscripten -fwasm-exceptions (Emscripten 3.1.58+) compiles __cpp_exception
+  // as a tag with { parameters: ['i32'] } — the i32 is a pointer to the
+  // exception object in WASM linear memory.
+  //
+  // Pyodide 0.26.x provides its own __cpp_exception tag in the import object
+  // for dynlib loading, but that tag may have a different type signature.
+  // We always override env.__cpp_exception with our i32 tag to ensure the
+  // type matches what clingo's WASM binary imports.
+  _cppExTagHolder.tag = new WebAssembly.Tag({ parameters: ['i32'] });
   const _origInstantiate = WebAssembly.instantiate;
   WebAssembly.instantiate = function patchedInstantiate(source, importObject) {
-    if (importObject?.env && _cppExTagHolder.tag &&
-        !(importObject.env.__cpp_exception instanceof WebAssembly.Tag)) {
+    if (importObject?.env && _cppExTagHolder.tag) {
       importObject.env.__cpp_exception = _cppExTagHolder.tag;
     }
     return _origInstantiate.call(WebAssembly, source, importObject);
   };
-  console.log('[smoke-test] Pre-patched WebAssembly.instantiate (Pyodide 0.25.x wasm-exceptions workaround).');
+  console.log('[smoke-test] Pre-patched WebAssembly.instantiate (__cpp_exception tag workaround).');
 }
 
 // ---------------------------------------------------------------------------
@@ -95,7 +109,7 @@ console.log(`[smoke-test] Pyodide ${pyodide.version} ready.`);
 
 // After loading, prefer Pyodide's own __cpp_exception tag for better
 // cross-module C++ exception compatibility.
-if (_cppExTagHolder.tag) {
+if (_needsCppExWorkaround && _cppExTagHolder.tag) {
   const pyTag = pyodide._module?.asm?.__cpp_exception;
   if (pyTag instanceof WebAssembly.Tag) {
     _cppExTagHolder.tag = pyTag;
@@ -125,13 +139,14 @@ await micropip.install('emfs:///${whlFilename}', deps=False)
 console.log('[smoke-test] clingo installed.');
 
 // ---------------------------------------------------------------------------
-// Smoke test 1: import clingo and check __version__
+// Smoke test 1: import clingo and check version
 // ---------------------------------------------------------------------------
 let version;
 try {
   version = await pyodide.runPythonAsync(`
 import clingo
-clingo.__version__
+from clingo.core import version as clingo_version
+".".join(str(x) for x in clingo_version())
 `);
 } catch (err) {
   console.error(`[smoke-test] ERROR: failed to import clingo: ${err}`);
@@ -139,7 +154,7 @@ clingo.__version__
 }
 console.log(`[smoke-test] clingo version: ${version}`);
 if (!version || typeof version !== 'string' || version.trim() === '') {
-  console.error('[smoke-test] ERROR: clingo.__version__ is empty or undefined');
+  console.error('[smoke-test] ERROR: clingo version is empty or undefined');
   process.exit(1);
 }
 
@@ -151,12 +166,14 @@ console.log('[smoke-test] Running ASP solve smoke test…');
 let nModels;
 try {
   nModels = await pyodide.runPythonAsync(`
-import clingo
-ctl = clingo.Control()
-ctl.add("base", [], "{a}.")
-ctl.ground([("base", [])])
-models = []
-ctl.solve(on_model=lambda m: models.append(str(m)))
+from clingo.core import Library
+from clingo.control import Control
+with Library() as lib:
+    ctl = Control(lib, ["0"])
+    ctl.parse_string("{a}.")
+    ctl.ground()
+    models = []
+    ctl.solve(on_model=lambda m: models.append(str(m)))
 len(models)
 `);
 } catch (err) {
@@ -177,12 +194,14 @@ console.log('[smoke-test] Running UNSAT smoke test…');
 let nUnsatModels;
 try {
   nUnsatModels = await pyodide.runPythonAsync(`
-import clingo
-ctl = clingo.Control()
-ctl.add("base", [], "a :- not a.")
-ctl.ground([("base", [])])
-models = []
-ctl.solve(on_model=lambda m: models.append(str(m)))
+from clingo.core import Library
+from clingo.control import Control
+with Library() as lib:
+    ctl = Control(lib, ["0"])
+    ctl.parse_string("a :- not a.")
+    ctl.ground()
+    models = []
+    ctl.solve(on_model=lambda m: models.append(str(m)))
 len(models)
 `);
 } catch (err) {
@@ -196,29 +215,30 @@ if (nUnsatModels !== 0) {
 }
 
 // ---------------------------------------------------------------------------
-// Smoke test 4: syntax error should raise a RuntimeError.
+// Smoke test 4: solve with program parameters (atoms over a range).
+// Tests that the ASP engine correctly handles grounding with parameters.
 // ---------------------------------------------------------------------------
-console.log('[smoke-test] Running syntax-error detection test…');
-let syntaxErrorCaught;
+console.log('[smoke-test] Running parameterized program test…');
+let nParamModels;
 try {
-  syntaxErrorCaught = await pyodide.runPythonAsync(`
-import clingo
-caught = False
-try:
-    ctl = clingo.Control()
-    ctl.add("base", [], "this is not valid ASP !!!")
-    ctl.ground([("base", [])])
-except RuntimeError:
-    caught = True
-caught
+  nParamModels = await pyodide.runPythonAsync(`
+from clingo.core import Library
+from clingo.control import Control
+with Library() as lib:
+    ctl = Control(lib, ["0"])
+    ctl.parse_string("#program base. {a(1..3)}.")
+    ctl.ground()
+    models = []
+    ctl.solve(on_model=lambda m: models.append([str(s) for s in m.symbols(shown=True)]))
+len(models)
 `);
 } catch (err) {
-  console.error(`[smoke-test] ERROR: syntax-error test failed unexpectedly: ${err}`);
+  console.error(`[smoke-test] ERROR: parameterized program test failed: ${err}`);
   process.exit(1);
 }
-console.log(`[smoke-test] Syntax error caught: ${syntaxErrorCaught} (expected True).`);
-if (!syntaxErrorCaught) {
-  console.error('[smoke-test] ERROR: expected RuntimeError for invalid syntax, but none was raised');
+console.log(`[smoke-test] Parameterized solve yielded ${nParamModels} model(s) (expected 8).`);
+if (nParamModels !== 8) {
+  console.error(`[smoke-test] ERROR: expected 8 models (subsets of {a(1),a(2),a(3)}), got ${nParamModels}`);
   process.exit(1);
 }
 

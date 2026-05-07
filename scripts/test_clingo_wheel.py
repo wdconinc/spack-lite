@@ -82,9 +82,11 @@ def main() -> None:
             )
             sys.exit(1)
         wheel_content = zf.read(wheel_metas[0]).decode()
-        if "emscripten" not in wheel_content.lower():
+        wasm_tag = ("emscripten" in wheel_content.lower() or
+                    "pyodide" in wheel_content.lower())
+        if not wasm_tag:
             print(
-                "ERROR: WHEEL metadata does not contain an emscripten platform tag.\n"
+                "ERROR: WHEEL metadata does not contain an emscripten or pyodide platform tag.\n"
                 f"WHEEL content:\n{wheel_content}",
                 file=sys.stderr,
             )

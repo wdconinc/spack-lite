@@ -65,6 +65,9 @@ else
   # Omit --depth 1 on fetch so it works regardless of local history depth.
   git -C "${CLINGO_REPO}" fetch origin "${CLINGO_BRANCH}"
   git -C "${CLINGO_REPO}" checkout "${CLINGO_BRANCH}"
+  # Reset any patches applied by a previous run so we start from a clean tree.
+  git -C "${CLINGO_REPO}" checkout -- .
+  git -C "${CLINGO_REPO}" submodule foreach 'git checkout -- .'
   # Always refresh submodules so missing content doesn't cause build failures.
   git -C "${CLINGO_REPO}" submodule update --init --recursive --depth 1
 fi
@@ -135,8 +138,11 @@ patches = [
     #    std::hash<std::string_view>{}(x) which requires a complete std::string
     #    type for the implicit std::string→std::string_view conversion.
     #    <filesystem> is needed, and std::hash<std::filesystem::path> must be
-    #    added because Emscripten 3.1.46's libc++ does not provide this
-    #    specialization (it falls through to the deleted __enum_hash<path>).
+    #    added for Emscripten < 3.1.58 (libc++ < 18, _LIBCPP_VERSION < 180000)
+    #    which does not provide this specialization (falls through to the
+    #    deleted __enum_hash<path>).  Emscripten 3.1.58+ (LLVM 18, libc++ 18)
+    #    already provides hash<filesystem::path>, so guard with a version check
+    #    to avoid a "redefinition" error on newer toolchains.
     (
         'hash.hh: add includes and std::hash<filesystem::path> specialization',
         ('.hh', '.h'),
@@ -147,6 +153,7 @@ patches = [
             '#include <filesystem>\n'
             '#include <string>\n'
             '#include <string_view>\n'
+            '#if !defined(_LIBCPP_VERSION) || _LIBCPP_VERSION < 180000\n'
             'namespace std {\n'
             'template<> struct hash<filesystem::path> {\n'
             '    size_t operator()(filesystem::path const& p) const noexcept {\n'
@@ -154,6 +161,7 @@ patches = [
             '    }\n'
             '};\n'
             '} // namespace std\n'
+            '#endif\n'
         ),
     ),
     # 3. Several files call std::ostringstream::view() (C++20, absent from
@@ -417,6 +425,7 @@ PYEOF
 log "Installing pyodide-build==${PYODIDE_VERSION} …"
 # auditwheel_emscripten (pulled in by pyodide-build) imports wheel.cli.pack
 # which was removed in wheel>=0.44.  Pin wheel<0.44 so the import succeeds.
+_PYODIDE_MINOR=$(echo "${PYODIDE_VERSION}" | cut -d. -f2)
 pip install --quiet "pyodide-build==${PYODIDE_VERSION}" "wheel<0.44"
 
 # ---------------------------------------------------------------------------
@@ -446,8 +455,10 @@ if spec is None or spec.origin is None:
 src_path = pathlib.Path(spec.origin)
 src = src_path.read_text()
 
+SENTINEL = "# pywasmcross-response-file-patch"
 OLD = "    result = subprocess.run(new_args)\n    return result.returncode"
-NEW = """\
+NEW = f"""\
+    {SENTINEL}
     # Use a response file when the arg list exceeds ARG_MAX to avoid E2BIG.
     # pyodide-build expands .a archives into individual bitcode paths before
     # calling em++; with large libraries this can exceed Linux's ~2 MB limit.
@@ -476,8 +487,12 @@ NEW = """\
         result = subprocess.run(new_args)
     return result.returncode"""
 
+if SENTINEL in src:
+    print(f"  {src_path} already patched — skipping")
+    sys.exit(0)
+
 if OLD not in src:
-    print(f"  pattern not found in {src_path} — already patched or version mismatch")
+    print(f"  pattern not found in {src_path} — version mismatch, skipping")
     sys.exit(0)
 
 src_path.write_text(src.replace(OLD, NEW, 1))
@@ -485,12 +500,103 @@ print(f"  patched {src_path}")
 PYEOF
 
 # ---------------------------------------------------------------------------
+# Step 2b': Patch pyodide_build/pywasmcross.py to intercept llvm-strip.
+#
+#           pywasmcross intercepts "strip" and redirects to "emstrip", which
+#           preserves the WASM dylink.0 custom section.  However, cmake may
+#           detect and use "llvm-strip" (found in the host PATH) as its strip
+#           tool.  The system llvm-strip removes ALL custom sections including
+#           dylink.0, destroying the side-module metadata that pyodide requires.
+#
+#           Fix: add "llvm-strip" to pywasmcross's SYMLINKS set so it creates
+#           an intercepting symlink, and handle it exactly like "strip".
+# ---------------------------------------------------------------------------
+log "Patching pyodide_build/pywasmcross.py to intercept llvm-strip …"
+python3 - <<'PYEOF'
+import importlib.util, pathlib, sys
+
+spec = importlib.util.find_spec("pyodide_build.pywasmcross")
+if spec is None or spec.origin is None:
+    print("  pyodide_build.pywasmcross not found — skipping patch")
+    sys.exit(0)
+
+src_path = pathlib.Path(spec.origin)
+src = src_path.read_text()
+
+SENTINEL = "# pywasmcross-llvm-strip-patch"
+if SENTINEL in src:
+    print(f"  {src_path} already patched — skipping")
+    sys.exit(0)
+
+# 1) Add "llvm-strip" to the SYMLINKS set
+OLD_SYMLINKS = '    "strip",'
+NEW_SYMLINKS = f'    "strip",\n    "llvm-strip",  {SENTINEL}'
+if OLD_SYMLINKS not in src:
+    print(f"  SYMLINKS pattern not found in {src_path} — skipping")
+    sys.exit(0)
+
+# 2) Add llvm-strip handler alongside the strip handler
+OLD_HANDLER = '    elif cmd == "strip":\n        line[0] = "emstrip"\n        return line'
+NEW_HANDLER = f'    elif cmd in ("strip", "llvm-strip"):\n        line[0] = "emstrip"\n        return line'
+if OLD_HANDLER not in src:
+    print(f"  strip handler pattern not found in {src_path} — skipping")
+    sys.exit(0)
+
+src = src.replace(OLD_SYMLINKS, NEW_SYMLINKS, 1)
+src = src.replace(OLD_HANDLER, NEW_HANDLER, 1)
+src_path.write_text(src)
+print(f"  patched {src_path}")
+PYEOF
+
+# ---------------------------------------------------------------------------
+# Step 2c: Patch pyodide_build/xbuildenv.py to skip installing cross-build
+#          packages (numpy==1.26.4, scipy==1.12.0) that have no prebuilt
+#          wheels for Python 3.13+.  Clingo does not depend on numpy/scipy,
+#          so this step is unnecessary and fails on Python ≥ 3.13 hosts.
+# ---------------------------------------------------------------------------
+if (( _PYODIDE_MINOR >= 26 )); then
+log "Patching pyodide_build/xbuildenv.py to skip cross-build packages …"
+python3 - <<'PYEOF'
+import importlib.util, pathlib, sys
+
+spec = importlib.util.find_spec("pyodide_build.xbuildenv")
+if spec is None or spec.origin is None:
+    print("  pyodide_build.xbuildenv not found — skipping patch")
+    sys.exit(0)
+
+src_path = pathlib.Path(spec.origin)
+src = src_path.read_text()
+
+SENTINEL = "# pywasmcross-skip-cross-build-packages-patch"
+if SENTINEL in src:
+    print(f"  {src_path} already patched — skipping")
+    sys.exit(0)
+
+OLD = "                if not skip_install_cross_build_packages:"
+NEW = f"                {SENTINEL}\n                if False and not skip_install_cross_build_packages:"
+
+if OLD not in src:
+    print(f"  pattern not found in {src_path} — version mismatch, skipping")
+    sys.exit(0)
+
+src_path.write_text(src.replace(OLD, NEW, 1))
+print(f"  patched {src_path}")
+PYEOF
+fi
+
+# ---------------------------------------------------------------------------
 # Step 3: Install the Pyodide cross-build environment inside the clingo
 #         source tree.  pyodide-build resolves '.pyodide-xbuildenv' relative
 #         to CWD, so it must live inside CLINGO_REPO when 'pyodide build' runs.
 # ---------------------------------------------------------------------------
 log "Setting up Pyodide cross-build environment for Pyodide ${PYODIDE_VERSION} …"
-(cd "${CLINGO_REPO}" && pyodide xbuildenv install --download)
+# pyodide-build ≤ 0.25.x uses 'xbuildenv install --download'; ≥ 0.26.x
+# downloads by default and dropped the --download flag.
+if (( _PYODIDE_MINOR < 26 )); then
+    (cd "${CLINGO_REPO}" && pyodide xbuildenv install --download)
+else
+    (cd "${CLINGO_REPO}" && pyodide xbuildenv install)
+fi
 
 # ---------------------------------------------------------------------------
 # Step 4: Install the Emscripten SDK.
@@ -500,7 +606,10 @@ log "Setting up Pyodide cross-build environment for Pyodide ${PYODIDE_VERSION} �
 #         this stays in sync automatically if PYODIDE_VERSION is bumped.
 # ---------------------------------------------------------------------------
 EMSCRIPTEN_VERSION=$(awk '/PYODIDE_EMSCRIPTEN_VERSION/ {print $NF}' \
-    "${CLINGO_REPO}/.pyodide-xbuildenv/xbuildenv/pyodide-root/Makefile.envs")
+    "$(cd "${CLINGO_REPO}" && python3 -c \
+        'from pyodide_build.common import xbuildenv_dirname
+from pyodide_build.xbuildenv import CrossBuildEnvManager
+print(CrossBuildEnvManager(xbuildenv_dirname()).pyodide_root)')/Makefile.envs")
 log "Installing Emscripten ${EMSCRIPTEN_VERSION} (required by Pyodide ${PYODIDE_VERSION}) …"
 
 if [[ ! -d "${EMSDK_DIR}/.git" ]]; then
@@ -623,6 +732,80 @@ export CMAKE_ARGS="${CMAKE_ARGS:-} -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF"
   # Emscripten's shlex-based response-file parser when a @rsp file is used.
   pyodide build --outdir "${OUTPUT_DIR}" --exports pyinit
 )
+
+# ---------------------------------------------------------------------------
+# Step 5.5: Fix Python/ABI tag mismatch.
+#   When the host Python (e.g. 3.14) differs from pyodide's bundled Python
+#   (e.g. 3.12), pyodide build stamps the wheel with the host's cpython tag.
+#   Re-tag both the wheel filename/metadata AND the .so inside the archive so
+#   that pyodide's micropip and CPython import machinery can find the module.
+# ---------------------------------------------------------------------------
+log "Checking wheel Python tag vs. pyodide target Python …"
+python3 - "${OUTPUT_DIR}" "${CLINGO_REPO}" <<'PYEOF'
+import os, sys, hashlib, base64, zipfile
+from pathlib import Path
+
+outdir = Path(sys.argv[1])
+clingo_repo = Path(sys.argv[2])
+
+# Determine the target Python from xbuildenv.
+os.chdir(clingo_repo)
+from pyodide_build.build_env import get_pyversion_major, get_pyversion_minor
+target_cp = f"cp{get_pyversion_major()}{get_pyversion_minor()}"
+
+whl_files = list(outdir.glob("*.whl"))
+if not whl_files:
+    print("  No wheel found — skipping retag.")
+    sys.exit(0)
+
+for whl in whl_files:
+    parts = whl.stem.split("-")   # name, ver, py, abi, platform
+    if len(parts) < 5 or parts[2] == target_cp:
+        print(f"  {whl.name}: tag already correct ({target_cp}).")
+        continue
+    host_cp = parts[2]
+    host_pyver = host_cp[2:]   # e.g. "314"
+    target_pyver = target_cp[2:]  # e.g. "312"
+    print(f"  Retagging {whl.name}: {host_cp} → {target_cp}")
+
+    # Read all entries and rename .so / update WHEEL & RECORD in memory.
+    entries: dict[str, bytes] = {}
+    with zipfile.ZipFile(whl) as zin:
+        for info in zin.infolist():
+            data = zin.read(info.filename)
+            new_name = info.filename.replace(
+                f"cpython-{host_pyver}-", f"cpython-{target_pyver}-"
+            )
+            entries[new_name] = data
+
+    # Fix WHEEL metadata tag lines.
+    wheel_key = next(k for k in entries if k.endswith("/WHEEL"))
+    wheel_meta = entries[wheel_key].decode()
+    old_tag = f"Tag: {host_cp}-{host_cp}-"
+    new_tag = f"Tag: {target_cp}-{target_cp}-"
+    entries[wheel_key] = wheel_meta.replace(old_tag, new_tag).encode()
+
+    # Rebuild RECORD with correct filenames and hashes.
+    record_key = next(k for k in entries if k.endswith("/RECORD"))
+    new_record_lines = []
+    for fname, data in entries.items():
+        if fname == record_key:
+            new_record_lines.append(f"{fname},,")
+            continue
+        digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+        new_record_lines.append(f"{fname},sha256={digest},{len(data)}")
+    entries[record_key] = "\n".join(new_record_lines).encode()
+
+    # Write new wheel with corrected filename.
+    parts[2] = target_cp
+    parts[3] = target_cp
+    new_whl = outdir / (("-".join(parts)) + ".whl")
+    with zipfile.ZipFile(new_whl, "w", zipfile.ZIP_DEFLATED) as zout:
+        for fname, data in entries.items():
+            zout.writestr(fname, data)
+    whl.unlink()
+    print(f"  → {new_whl.name}")
+PYEOF
 
 # ---------------------------------------------------------------------------
 # Step 6: Report what we produced

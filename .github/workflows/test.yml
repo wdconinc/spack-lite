@@ -73,11 +73,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Must match the Pyodide version pinned in worker.js (PYODIDE_CDN)
-      PYODIDE_VERSION: "0.25.1"
+      PYODIDE_VERSION: "0.26.4"
       # Must match the Python version bundled in the Pyodide release above.
       # The wheel ABI tag is derived from the host Python, so this must agree
       # with what Pyodide ships (3.11 for 0.25.x, 3.12 for 0.26.x, …).
-      PYTHON_VERSION: "3.11"
+      PYTHON_VERSION: "3.12"
       CLINGO_BRANCH: wip-20
     steps:
       - name: Checkout repository

@@ -80,6 +80,10 @@
 // ---------------------------------------------------------------------------
 // Terminal setup
 // ---------------------------------------------------------------------------
+const isCoarsePointer =
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(pointer: coarse)').matches;
+
 const term = new Terminal({
   theme: {
     background:  '#1e1e2e',
@@ -100,6 +104,10 @@ const term = new Terminal({
   lineHeight: 1.3,
   cursorStyle: 'block',
   cursorBlink: true,
+  // Mobile browsers often cannot select canvas-rendered terminal output
+  // reliably. Enabling screenReaderMode exposes accessible text rows that can
+  // be selected/copied with native touch gestures.
+  screenReaderMode: isCoarsePointer,
 });
 const fitAddon = new FitAddon.FitAddon();
 term.loadAddon(fitAddon);

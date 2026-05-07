@@ -103,6 +103,19 @@ jobs:
           EM_COMPILER_WRAPPER: ccache
         run: bash scripts/build_clingo_pyodide.sh
 
+      - name: Verify wheel structure
+        run: python3 scripts/test_clingo_wheel.py /tmp/clingo-wheel
+
+      - name: Install pyodide for wheel smoke test
+        run: |
+          mkdir -p /tmp/pyodide-test
+          npm install --prefix /tmp/pyodide-test pyodide@${{ env.PYODIDE_VERSION }}
+
+      - name: Smoke-test clingo wheel in Pyodide (Node.js)
+        run: |
+          cp scripts/smoke_test_clingo_pyodide.mjs /tmp/pyodide-test/
+          cd /tmp/pyodide-test && node smoke_test_clingo_pyodide.mjs /tmp/clingo-wheel
+
       - name: Show ccache statistics
         if: always()
         run: ccache --show-stats

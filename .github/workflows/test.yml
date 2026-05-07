@@ -67,3 +67,49 @@ jobs:
           pytest tests/ -v --timeout=300
         env:
           SPACK_ROOT: ${{ env.SPACK_ROOT }}
+
+  build-wheel:
+    name: Build clingo Pyodide wheel
+    runs-on: ubuntu-latest
+    env:
+      # Must match the Pyodide version pinned in worker.js (PYODIDE_CDN)
+      PYODIDE_VERSION: "0.25.1"
+      CLINGO_BRANCH: wip-20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install ccache
+        run: |
+          sudo apt-get install -y ccache
+          # Pre-create the cache directory so the save step doesn't warn
+          # "path does not exist" when the build fails before any ccache hit.
+          mkdir -p ~/.ccache
+
+      - name: Restore ccache objects
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.ccache
+          key: ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-${{ runner.os }}
+          restore-keys: |
+            ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-
+            ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-
+
+      - name: Build clingo Pyodide wheel
+        env:
+          # Tell Emscripten to use ccache as the compiler wrapper so that
+          # unchanged C/C++ translation units are served from cache on
+          # repeated builds.
+          EM_COMPILER_WRAPPER: ccache
+        run: bash scripts/build_clingo_pyodide.sh
+
+      - name: Show ccache statistics
+        if: always()
+        run: ccache --show-stats
+
+      - name: Save ccache objects
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.ccache
+          key: ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-${{ runner.os }}

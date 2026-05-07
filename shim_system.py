@@ -310,8 +310,9 @@ for _d in _REQUIRED_DIRS:
 # /lib64/ld-linux-x86-64.so.2 — spack.util.libc._libc_from_dynamic_linker checks
 # os.path.exists() on this path before probing the dynamic linker for a glibc
 # version.  On real Linux hosts the file already exists; we create a stub here
-# for Pyodide/MEMFS where the path is absent.  The "x" (exclusive-create) mode
-# silently skips the write when the file already exists.
+# for Pyodide/MEMFS where the path is absent.  We use "x" (exclusive-create)
+# mode so that opening an already-existing file raises FileExistsError, which
+# the except clause silently discards — leaving the real file untouched.
 try:
     os.makedirs("/lib64", exist_ok=True)
     with open("/lib64/ld-linux-x86-64.so.2", "x") as _f:

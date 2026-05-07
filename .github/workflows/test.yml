@@ -94,6 +94,10 @@ jobs:
           # Pre-create the cache directory so the save step doesn't warn
           # "path does not exist" when the build fails before any ccache hit.
           mkdir -p ~/.ccache
+          # Emscripten's exec_process uses os.execv (not execvp), which does NOT
+          # search PATH.  Resolve ccache to its absolute path and export it so
+          # that EM_COMPILER_WRAPPER contains a full path that os.execv can find.
+          echo "EM_COMPILER_WRAPPER=$(which ccache)" >> "$GITHUB_ENV"
 
       - name: Restore ccache objects
         uses: actions/cache/restore@v4
@@ -106,10 +110,9 @@ jobs:
 
       - name: Build clingo Pyodide wheel
         env:
-          # Tell Emscripten to use ccache as the compiler wrapper so that
-          # unchanged C/C++ translation units are served from cache on
-          # repeated builds.
-          EM_COMPILER_WRAPPER: ccache
+          # EM_COMPILER_WRAPPER is set to the absolute path of ccache in the
+          # "Install ccache" step above (via GITHUB_ENV) because Emscripten's
+          # exec_process uses os.execv, which requires a full path (unlike execvp).
         run: bash scripts/build_clingo_pyodide.sh
 
       - name: Verify wheel structure

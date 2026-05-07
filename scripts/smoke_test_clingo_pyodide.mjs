@@ -87,10 +87,16 @@ console.log('[smoke-test] clingo installed.');
 // ---------------------------------------------------------------------------
 // Smoke test 1: import clingo and check __version__
 // ---------------------------------------------------------------------------
-const version = await pyodide.runPythonAsync(`
+let version;
+try {
+  version = await pyodide.runPythonAsync(`
 import clingo
 clingo.__version__
 `);
+} catch (err) {
+  console.error(`[smoke-test] ERROR: failed to import clingo: ${err}`);
+  process.exit(1);
+}
 console.log(`[smoke-test] clingo version: ${version}`);
 if (!version || typeof version !== 'string' || version.trim() === '') {
   console.error('[smoke-test] ERROR: clingo.__version__ is empty or undefined');
@@ -102,7 +108,9 @@ if (!version || typeof version !== 'string' || version.trim() === '') {
 // The program "{a}." has two stable models: {} and {a}.
 // ---------------------------------------------------------------------------
 console.log('[smoke-test] Running ASP solve smoke test…');
-const nModels = await pyodide.runPythonAsync(`
+let nModels;
+try {
+  nModels = await pyodide.runPythonAsync(`
 import clingo
 ctl = clingo.Control()
 ctl.add("base", [], "{a}.")
@@ -111,6 +119,10 @@ models = []
 ctl.solve(on_model=lambda m: models.append(str(m)))
 len(models)
 `);
+} catch (err) {
+  console.error(`[smoke-test] ERROR: ASP solve failed: ${err}`);
+  process.exit(1);
+}
 console.log(`[smoke-test] Solve yielded ${nModels} model(s) (expected 2).`);
 if (nModels !== 2) {
   console.error(`[smoke-test] ERROR: expected 2 models, got ${nModels}`);
@@ -122,7 +134,9 @@ if (nModels !== 2) {
 // "a :- not a." has no stable model in answer-set semantics.
 // ---------------------------------------------------------------------------
 console.log('[smoke-test] Running UNSAT smoke test…');
-const nUnsatModels = await pyodide.runPythonAsync(`
+let nUnsatModels;
+try {
+  nUnsatModels = await pyodide.runPythonAsync(`
 import clingo
 ctl = clingo.Control()
 ctl.add("base", [], "a :- not a.")
@@ -131,6 +145,10 @@ models = []
 ctl.solve(on_model=lambda m: models.append(str(m)))
 len(models)
 `);
+} catch (err) {
+  console.error(`[smoke-test] ERROR: UNSAT solve failed: ${err}`);
+  process.exit(1);
+}
 console.log(`[smoke-test] UNSAT solve yielded ${nUnsatModels} model(s) (expected 0).`);
 if (nUnsatModels !== 0) {
   console.error(`[smoke-test] ERROR: expected 0 models for UNSAT program, got ${nUnsatModels}`);
@@ -141,7 +159,9 @@ if (nUnsatModels !== 0) {
 // Smoke test 4: syntax error should raise a RuntimeError.
 // ---------------------------------------------------------------------------
 console.log('[smoke-test] Running syntax-error detection test…');
-const syntaxErrorCaught = await pyodide.runPythonAsync(`
+let syntaxErrorCaught;
+try {
+  syntaxErrorCaught = await pyodide.runPythonAsync(`
 import clingo
 caught = False
 try:
@@ -152,6 +172,10 @@ except RuntimeError:
     caught = True
 caught
 `);
+} catch (err) {
+  console.error(`[smoke-test] ERROR: syntax-error test failed unexpectedly: ${err}`);
+  process.exit(1);
+}
 console.log(`[smoke-test] Syntax error caught: ${syntaxErrorCaught} (expected True).`);
 if (!syntaxErrorCaught) {
   console.error('[smoke-test] ERROR: expected RuntimeError for invalid syntax, but none was raised');

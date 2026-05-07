@@ -77,6 +77,16 @@ import micropip.transaction as _mt
 # Patch the reference in transaction module (which imports it at load time).
 _mt.check_compatible = lambda filename: None
 await micropip.install('emfs:///${whlFilename}', deps=False)
+
+# The wheel's .so is tagged cpython-312, but Pyodide may run Python 3.11.
+# Rename any installed clingo .so to match the running interpreter's ABI tag
+# so that the normal 'import clingo' machinery can locate it.
+import sys, os, glob, re
+running_tag = f"cpython-{sys.version_info.major}{sys.version_info.minor}"
+for f in glob.glob('/lib/python3*/site-packages/clingo*.so'):
+    new_name = re.sub(r'cpython-3\d+', running_tag, f)
+    if new_name != f and not os.path.exists(new_name):
+        os.rename(f, new_name)
 `);
 } catch (err) {
   console.error(`[smoke-test] ERROR: micropip install failed: ${err}`);

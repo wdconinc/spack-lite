@@ -73,7 +73,7 @@ console.log(`[smoke-test] Wheel: ${basename(whlPath)}`);
 // that cross-module C++ exception propagation remains correct.
 // ---------------------------------------------------------------------------
 const _cppExTagHolder = { tag: null };
-if (typeof WebAssembly?.Tag !== 'undefined') {
+if (typeof WebAssembly.Tag !== 'undefined') {
   _cppExTagHolder.tag = new WebAssembly.Tag({ parameters: ['externref'] });
   const _origInstantiate = WebAssembly.instantiate;
   WebAssembly.instantiate = function patchedInstantiate(source, importObject) {

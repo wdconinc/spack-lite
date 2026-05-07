@@ -79,7 +79,7 @@
 // ---------------------------------------------------------------------------
 // Terminal setup
 // ---------------------------------------------------------------------------
-const isMobileBrowser = window.matchMedia('(pointer: coarse)').matches;
+const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
 
 const term = new Terminal({
   theme: {
@@ -104,7 +104,7 @@ const term = new Terminal({
   // Mobile browsers often cannot select canvas-rendered terminal output
   // reliably. Enabling screenReaderMode exposes accessible text rows that can
   // be selected/copied with native touch gestures.
-  screenReaderMode: isMobileBrowser,
+  screenReaderMode: isCoarsePointer,
 });
 const fitAddon = new FitAddon.FitAddon();
 term.loadAddon(fitAddon);

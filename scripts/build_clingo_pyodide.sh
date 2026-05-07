@@ -452,12 +452,16 @@ NEW = """\
     # Emscripten 3.1.46 supports @file response files (expand_response_files).
     _arg_total = sum(len(a) + 1 for a in new_args[1:])
     if _arg_total > 400_000:
+        import shlex as _shlex
         import tempfile as _tf
         with _tf.NamedTemporaryFile(
             mode='w', suffix='.rsp', delete=False, prefix='empp_rsp_'
         ) as _rf:
             for _a in new_args[1:]:
-                _rf.write(_a + '\\n')
+                # Emscripten reads response files with shlex.split, so args
+                # containing spaces (e.g. EXPORTED_FUNCTIONS Python repr) must
+                # be quoted; use shlex.quote for portable shell-safe quoting.
+                _rf.write(_shlex.quote(_a) + '\\n')
             _rsp = _rf.name
         try:
             result = subprocess.run([new_args[0], '@' + _rsp])
@@ -563,7 +567,7 @@ wrapper = '''\
 # em++ response-file wrapper — avoids E2BIG (Argument list too long).
 # Calls em++.py directly; never invokes the original em++ launcher so the
 # em++/em++.real -> em++.real.py bootstrap chain is bypassed entirely.
-import sys, os, subprocess, tempfile
+import sys, os, subprocess, tempfile, shlex
 _PY = EMPP_PY_PLACEHOLDER
 # Use a response file when the argument list exceeds this threshold to stay
 # safely below the Linux ARG_MAX minus typical environment-variable overhead.
@@ -574,7 +578,10 @@ if sum(len(a) + 1 for a in _args) > _RSP_THRESHOLD:
             mode='w', suffix='.rsp', delete=False,
             prefix='empp_rsp_') as _f:
         for _a in _args:
-            _f.write(_a + '\\n')
+            # Emscripten reads response files with shlex.split, so args
+            # containing spaces (e.g. EXPORTED_FUNCTIONS Python repr) must
+            # be quoted; use shlex.quote for portable shell-safe quoting.
+            _f.write(shlex.quote(_a) + '\\n')
         _rsp = _f.name
     try:
         _r = subprocess.run([sys.executable, _PY, '@' + _rsp], check=False)
@@ -607,7 +614,12 @@ mkdir -p "${OUTPUT_DIR}"
 export CMAKE_ARGS="${CMAKE_ARGS:-} -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF"
 (
   cd "${CLINGO_REPO}"
-  pyodide build --outdir "${OUTPUT_DIR}"
+  # --exports pyinit: export only the PyInit_clingo symbol.
+  # Using the default "requested" would export ALL public C++ symbols from every
+  # linked .a archive (potentially thousands of mangled names), producing a huge
+  # Python-repr EXPORTED_FUNCTIONS string with internal spaces that breaks
+  # Emscripten's shlex-based response-file parser when a @rsp file is used.
+  pyodide build --outdir "${OUTPUT_DIR}" --exports pyinit
 )
 
 # ---------------------------------------------------------------------------

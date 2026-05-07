@@ -68,7 +68,7 @@ if "SPACK_USER_CONFIG_PATH" not in os.environ:
 
     _cfg_src = os.path.join(_REPO_ROOT, "spack_config")
     if os.path.isdir(_cfg_src):
-        for _fname in ("config.yaml", "packages.yaml", "repos.yaml"):
+        for _fname in ("config.yaml", "concretizer.yaml", "packages.yaml", "repos.yaml"):
             _src = os.path.join(_cfg_src, _fname)
             if os.path.isfile(_src):
                 shutil.copy(_src, os.path.join(_cfg_tmp, _fname))

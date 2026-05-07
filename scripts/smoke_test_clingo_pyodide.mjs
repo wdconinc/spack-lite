@@ -71,25 +71,7 @@ console.log(`[smoke-test] Installing clingo from emfs:///${whlFilename}…`);
 try {
   await pyodide.runPythonAsync(`
 import micropip
-import micropip.transaction as _mt
-# Bypass ABI compatibility check: the wheel is built for this specific
-# Pyodide/Emscripten target; strict CPython-version matching is not needed.
-# Patch the reference in transaction module (which imports it at load time).
-_mt.check_compatible = lambda filename: None
 await micropip.install('emfs:///${whlFilename}', deps=False)
-
-# The wheel's .so may be tagged with a different cpython version than the
-# running interpreter (e.g. cp312 wheel in a cp311 Pyodide). Load it directly
-# via importlib so the ABI-tagged filename is never matched by the normal
-# import machinery.
-import importlib.util, sys, glob
-so_files = glob.glob('/lib/python*/site-packages/clingo*.so')
-if not so_files:
-    raise ImportError("clingo .so not found under site-packages after install")
-spec = importlib.util.spec_from_file_location("clingo", so_files[0])
-mod = importlib.util.module_from_spec(spec)
-sys.modules["clingo"] = mod
-spec.loader.exec_module(mod)
 `);
 } catch (err) {
   console.error(`[smoke-test] ERROR: micropip install failed: ${err}`);

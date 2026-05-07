@@ -64,13 +64,14 @@ console.log(`[smoke-test] Pyodide ${pyodide.version} ready.`);
 // ---------------------------------------------------------------------------
 await pyodide.loadPackage('micropip');
 const whlBytes = readFileSync(whlPath);
-pyodide.FS.writeFile('/clingo.whl', whlBytes);
+const whlFilename = basename(whlPath);
+pyodide.FS.writeFile(`/${whlFilename}`, whlBytes);
 
-console.log('[smoke-test] Installing clingo from emfs:///clingo.whl…');
+console.log(`[smoke-test] Installing clingo from emfs:///${whlFilename}…`);
 try {
   await pyodide.runPythonAsync(`
 import micropip
-await micropip.install('emfs:///clingo.whl', deps=False)
+await micropip.install('emfs:///${whlFilename}', deps=False)
 `);
 } catch (err) {
   console.error(`[smoke-test] ERROR: micropip install failed: ${err}`);

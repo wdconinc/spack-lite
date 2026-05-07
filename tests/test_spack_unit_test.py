@@ -96,6 +96,54 @@ class TestSpackUnitTestCollect:
         )
 
 
+class TestSpackSpec:
+    """Test that ``spack spec zlib`` concretizes in the shimmed Pyodide environment.
+
+    ``spack spec zlib`` exercises the full concretization path, including the
+    clingo solver.  When clingo is installed as a Python package (via pip) Spack
+    detects it through ``importlib.util.find_spec('clingo')`` and skips the
+    bootstrap procedure entirely, making it safe to run inside the shimmed
+    environment.
+
+    The test is skipped when the spack-packages builtin repository has not been
+    cloned into ``$SPACK_ROOT/var/spack/repos/spack_repo/builtin`` (this is
+    done by the CI workflow but typically absent in local development).
+    """
+
+    # Path relative to SPACK_ROOT where the builtin repo packages live.
+    _BUILTIN_PACKAGES = "var/spack/repos/spack_repo/builtin/packages"
+    # Package we concretize.
+    _PKG = "zlib"
+
+    @pytest.mark.timeout(300)
+    def test_spec_zlib(self, spack_root):
+        """``spack spec zlib`` must produce a concretized spec containing ``zlib@``."""
+        pkg_dir = os.path.join(spack_root, self._BUILTIN_PACKAGES, self._PKG)
+        if not os.path.isdir(pkg_dir):
+            pytest.skip(
+                f"spack-packages builtin repo not present at "
+                f"{os.path.join(spack_root, self._BUILTIN_PACKAGES)!r}. "
+                "Clone spack-packages and copy builtin/ into "
+                "$SPACK_ROOT/var/spack/repos/spack_repo/builtin to run this test."
+            )
+
+        r = run_in_shell(
+            f"spack spec {self._PKG}",
+            timeout=300,
+            extra_env={"SPACK_ROOT": spack_root},
+        )
+        combined = r.stdout + r.stderr
+        assert r.returncode == 0, (
+            f"spack spec {self._PKG} exited with {r.returncode}.\n"
+            f"stdout: {r.stdout}\nstderr: {r.stderr}"
+        )
+        # A successful concretization prints "zlib@<version>" in the spec output.
+        assert re.search(r"zlib@\S+", combined), (
+            f"Expected a concretized zlib spec (e.g. 'zlib@1.3.1') in output.\n"
+            f"stdout:\n{r.stdout}\nstderr:\n{r.stderr}"
+        )
+
+
 class TestSpackUnitTestRun:
     """Run a small, subprocess-free subset of Spack unit tests.
 

@@ -139,8 +139,31 @@ def _build_mock_result(args=None, **kwargs):
 
     if "uname" in cmd:
         stdout = b"x86_64\n"
+    elif "ld-linux-x86-64.so.2" in cmd:
+        # Probed by spack.util.libc._libc_from_dynamic_linker to detect glibc.
+        # --version: emit a glibc banner so GLIBC_PATTERN matches and the
+        #            version ("2.35") is extracted.
+        # --help: emit the search-path lines consumed by
+        #         DefaultDynamicLinkerFilter (empty → no paths filtered out).
+        if "--version" in cmd:
+            stdout = (
+                b"ld.so (GNU C Library) stable release version 2.35.\n"
+                b"Copyright (C) 2022 Free Software Foundation, Inc.\n"
+            )
     elif "gcc" in cmd or ("cc" in cmd and "clang" not in cmd):
-        stdout = b"gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0\n"
+        # Compilation with -v (CompilerPropertyDetector._compile_dummy_c_source)
+        # must include "-dynamic-linker /lib64/ld-linux-x86-64.so.2" in the
+        # output so that spack.util.libc.parse_dynamic_linker() can extract the
+        # linker path and detect glibc.  This lets the compiler pass spack's
+        # libc compatibility check on Linux, allowing concretization to proceed.
+        if " -v " in cmd and " -o " in cmd:
+            stderr = (
+                b"gcc version 11.4.0 (Ubuntu 11.4.0-1ubuntu1~22.04)\n"
+                b" /usr/lib/gcc/x86_64-linux-gnu/11/collect2"
+                b" -dynamic-linker /lib64/ld-linux-x86-64.so.2\n"
+            )
+        else:
+            stdout = b"gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0\n"
     elif "g++" in cmd or "c++" in cmd:
         stdout = b"g++ (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0\n"
     elif "gfortran" in cmd or "fortran" in cmd:
@@ -283,6 +306,19 @@ for _d in _REQUIRED_DIRS:
         os.makedirs(_d, exist_ok=True)
     except (PermissionError, OSError):
         pass  # Silently skip on non-Pyodide hosts
+
+# /lib64/ld-linux-x86-64.so.2 — spack.util.libc._libc_from_dynamic_linker checks
+# os.path.exists() on this path before probing the dynamic linker for a glibc
+# version.  On real Linux hosts the file already exists; we create a stub here
+# for Pyodide/MEMFS where the path is absent.  We use "x" (exclusive-create)
+# mode so that opening an already-existing file raises FileExistsError, which
+# the except clause silently discards — leaving the real file untouched.
+try:
+    os.makedirs("/lib64", exist_ok=True)
+    with open("/lib64/ld-linux-x86-64.so.2", "x") as _f:
+        _f.write("# spack-lite shim: fake ELF dynamic-linker stub\n")
+except (FileExistsError, PermissionError, OSError):
+    pass
 
 # /proc/cpuinfo — archspec reads this file to identify the CPU microarchitecture.
 # Provide a realistic x86_64 (Haswell) entry so archspec resolves a concrete

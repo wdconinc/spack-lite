@@ -1,0 +1,8 @@
+concretizer:
+  # Do not attempt to reuse previously installed packages from the spack
+  # database.  In the shimmed browser/Pyodide environment no packages are
+  # actually installed, so reuse is always false.  More importantly, the
+  # reuse check in spack develop (2025+) requires libc information for
+  # compiler packages; our fake gcc stub cannot provide that, causing
+  # "Cannot reuse gcc since we cannot determine libc compatibility".
+  reuse: false

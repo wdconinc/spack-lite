@@ -95,4 +95,45 @@ if (nModels !== 2) {
   process.exit(1);
 }
 
+// ---------------------------------------------------------------------------
+// Smoke test 3: unsatisfiable program should yield 0 models.
+// "a :- not a." has no stable model in answer-set semantics.
+// ---------------------------------------------------------------------------
+console.log('[smoke-test] Running UNSAT smoke test…');
+const nUnsatModels = await pyodide.runPythonAsync(`
+import clingo
+ctl = clingo.Control()
+ctl.add("base", [], "a :- not a.")
+ctl.ground([("base", [])])
+models = []
+ctl.solve(on_model=lambda m: models.append(str(m)))
+len(models)
+`);
+console.log(`[smoke-test] UNSAT solve yielded ${nUnsatModels} model(s) (expected 0).`);
+if (nUnsatModels !== 0) {
+  console.error(`[smoke-test] ERROR: expected 0 models for UNSAT program, got ${nUnsatModels}`);
+  process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// Smoke test 4: syntax error should raise a RuntimeError.
+// ---------------------------------------------------------------------------
+console.log('[smoke-test] Running syntax-error detection test…');
+const syntaxErrorCaught = await pyodide.runPythonAsync(`
+import clingo
+caught = False
+try:
+    ctl = clingo.Control()
+    ctl.add("base", [], "this is not valid ASP !!!")
+    ctl.ground([("base", [])])
+except RuntimeError:
+    caught = True
+caught
+`);
+console.log(`[smoke-test] Syntax error caught: ${syntaxErrorCaught} (expected True).`);
+if (!syntaxErrorCaught) {
+  console.error('[smoke-test] ERROR: expected RuntimeError for invalid syntax, but none was raised');
+  process.exit(1);
+}
+
 console.log('[smoke-test] All checks passed.');

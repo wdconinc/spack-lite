@@ -286,6 +286,8 @@ os.environ.setdefault("HOME", "/home/pyodide")
 os.environ.setdefault("USER", "pyodide")
 os.environ.setdefault("LOGNAME", "pyodide")
 os.environ.setdefault("SHELL", "/bin/sh")
+os.environ.setdefault("EDITOR", "vi")
+os.environ.setdefault("VISUAL", "vi")
 os.environ.setdefault("PATH", "/usr/bin:/bin:/usr/local/bin")
 os.environ.setdefault("SPACK_USER_CONFIG_PATH", "/home/pyodide/.spack")
 os.environ.setdefault("SPACK_ROOT", "/home/pyodide/spack")
@@ -789,6 +791,9 @@ _FAKE_EXECUTABLES = [
     "/usr/bin/tar",
     "/usr/bin/curl",
     "/usr/bin/unzip",
+    "/usr/bin/vi",
+    "/usr/bin/vim",
+    "/usr/bin/editor",
 ]
 
 for _exe_path in _FAKE_EXECUTABLES:

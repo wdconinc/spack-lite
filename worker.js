@@ -439,7 +439,7 @@ import clingo
     // 5. Fetch and unpack spack-lite.tar.gz
     setStatus('loading', 'Fetching spack-lite archive…');
     try {
-      const response = await fetch(new URL(SPACK_LITE_URL, _WORKER_BASE_URL).href);
+      const response = await fetch(new URL(SPACK_LITE_URL, _WORKER_BASE_URL).href, { cache: 'no-cache' });
       if (response.ok) {
         const buffer = await response.arrayBuffer();
         setStatus('loading', 'Unpacking spack-lite…');

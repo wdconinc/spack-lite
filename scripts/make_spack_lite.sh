@@ -177,7 +177,7 @@ CFG_SRC="${REPO_ROOT}/spack_config"
 CFG_DST="${SPACK_LITE_DIR}/etc/spack"
 mkdir -p "${CFG_DST}"
 
-for f in config.yaml compilers.yaml packages.yaml repos.yaml; do
+for f in config.yaml packages.yaml repos.yaml; do
   if [[ -f "${CFG_SRC}/${f}" ]]; then
     cp "${CFG_SRC}/${f}" "${CFG_DST}/${f}"
   fi

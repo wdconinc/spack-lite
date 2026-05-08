@@ -46,13 +46,16 @@ Commands can be chained with pipes (`\|`) and support `$VAR` / `${VAR}` expansio
 
 ```
 Browser Tab
-├── index.html          ← xterm.js UI + message bus
-└── worker.js           ← Web Worker
-    ├── Pyodide         ← WebAssembly Python runtime
-    ├── shim_system.py  ← "System lie": patches subprocess / os / platform
-    ├── shell.py        ← Python-backed POSIX shell (ls, cd, cat, grep, …)
-    ├── ~/.spack/       ← Injected compiler + package config
-    └── /home/pyodide/spack/   ← spack-lite.tar.gz unpacked into MEMFS
+├── index.html               ← xterm.js UI + message bus
+└── worker.js                ← Web Worker
+    ├── Pyodide 0.27.3       ← WebAssembly Python runtime (Python 3.12)
+    │   └── clingo 5.7.1     ← ASP solver, bundled in Pyodide — loaded via loadPackage()
+    ├── wasm-git 0.0.14      ← libgit2 compiled to WASM; exposes self.gitCall for git ops
+    ├── shim_system.py       ← "System lie": patches subprocess / os / platform
+    ├── shell.py             ← Python-backed POSIX shell (ls, cd, cat, grep, …)
+    ├── ~/.spack/            ← Injected compiler + package config (written at startup)
+    └── /home/pyodide/spack/ ← spack-lite.tar.gz (seed packages) + spack-packages.tar.gz
+                               (all packages, overlaid lazily in the background)
 ```
 
 Because Spack is a POSIX application that relies heavily on `subprocess`, the
@@ -61,28 +64,46 @@ a real `fork`/`exec` (which is unavailable in WASM) and returns hard-coded
 responses that make Spack believe it is running on a standard **Linux x86_64**
 host with GCC 11 available.
 
+Clingo 5.7.1 (the ASP solver used by `spack spec` and `spack concretize`) is
+bundled directly in Pyodide 0.27.3 and is loaded via `pyodide.loadPackage('clingo')`
+— no custom WASM build or separate wheel download is required.
+
+The Spack package repository was split into
+[spack/spack-packages](https://github.com/spack/spack-packages) in Package API
+v2.x. `make_spack_lite.sh` clones both `spack/spack` and `spack/spack-packages`
+and produces two archives:
+
+- **`spack-lite.tar.gz`** — core Spack + a seed set of ~35 demo packages,
+  available immediately when the browser interface becomes active.
+- **`spack-packages.tar.gz`** — all Spack built-in package recipes, fetched
+  lazily in the background so the full catalogue is available without delaying
+  the initial page load.
+
 ---
 
 ## Quick Start
 
 ### 1. Build the Spack-Lite archive
 
-The browser loads a stripped-down copy of Spack called `spack-lite.tar.gz`.
-Build it with the helper script (requires `git`, `rsync`, `tar`):
+The browser loads a stripped-down copy of Spack. Build both archives with the
+helper script (requires `git`, `rsync`, `tar`):
 
 ```bash
 # Clone the repo and run the build script
 git clone https://github.com/wdconinc/spack-lite.git
 cd spack-lite
 bash scripts/make_spack_lite.sh
-# → produces spack-lite.tar.gz (~10–20 MB) in the repo root
+# → produces spack-lite.tar.gz and spack-packages.tar.gz in the repo root
 ```
 
 The script:
-1. Clones Spack `develop` branch (configurable via `SPACK_VERSION=vX.Y.Z` or `SPACK_VERSION=develop`)
-2. Strips `.git`, tests, docs, and all but ~35 demo packages
-3. Injects `spack_config/` (fake compiler + package prefs) into `etc/spack/`
-4. Packs everything as `spack-lite.tar.gz`
+1. Clones Spack `develop` branch (configurable via `SPACK_VERSION=vX.Y.Z`)
+2. Clones `spack/spack-packages` for the package recipes (configurable via
+   `SPACK_PACKAGES_VERSION=develop`)
+3. Strips `.git`, tests, docs, and large assets from the core
+4. Injects `spack_config/` (fake compiler + package prefs) into `etc/spack/`
+5. Packs a seed set of ~35 demo packages as `spack-lite.tar.gz`
+6. Packs all built-in package recipes as `spack-packages.tar.gz` (lazy-loaded)
 
 ### 2. Serve the app
 
@@ -122,12 +143,17 @@ spack-lite/
 ├── shell.py                ← Python-backed POSIX shell interpreter
 ├── shim_system.py          ← Subprocess / platform / os monkey-patches
 ├── spack_config/
-│   ├── compilers.yaml      ← Fake GCC 11 compiler definition
-│   ├── packages.yaml       ← Provider preferences (openmpi, openblas …)
-│   ├── config.yaml         ← Core Spack config (concretizer, no checksum …)
+│   ├── concretizer.yaml    ← Concretizer config (reuse: false for browser env)
+│   ├── packages.yaml       ← Provider preferences + fake GCC 11 external spec
+│   ├── config.yaml         ← Core Spack config (concretizer: clingo, no checksum …)
 │   └── repos.yaml          ← Override builtin repo to local path (no git needed)
 ├── scripts/
-│   └── make_spack_lite.sh  ← Builds spack-lite.tar.gz
+│   ├── make_spack_lite.sh          ← Builds spack-lite.tar.gz + spack-packages.tar.gz
+│   ├── build_clingo_pyodide.sh     ← (CI) Builds a Pyodide clingo wheel from source
+│   ├── build_local.py              ← Bundles worker inline for local file:// testing
+│   ├── check_pyodide_version_sync.py ← CI: verifies PYODIDE_VERSION matches worker.js
+│   ├── smoke_test_clingo_pyodide.mjs ← Node smoke-test for the clingo wheel
+│   └── smoke_test_site_browser.mjs   ← Playwright browser smoke-test for the full site
 └── README.md
 ```
 
@@ -135,20 +161,32 @@ spack-lite/
 
 ## Configuration Files
 
-### `spack_config/compilers.yaml`
+### `spack_config/concretizer.yaml`
 
-Defines a virtual **GCC 11.4.0** pointing at `/usr/bin/gcc`.  
-The compiler never actually runs; all invocations are intercepted by the shim.
+Sets `reuse: false` to prevent Spack from attempting to reuse previously
+installed packages.  In the browser/Pyodide environment no packages are ever
+actually installed, so the reuse check (which requires libc compatibility
+information from compiler packages) would always fail with Spack ≥ 2025.
 
 ### `spack_config/packages.yaml`
 
-Sets sensible provider defaults (`openmpi` for MPI, `openblas` for BLAS/LAPACK)
-and locks the target microarchitecture to `x86_64`.
+Sets sensible provider defaults (`openmpi` for MPI, `openblas` for BLAS/LAPACK),
+locks the target microarchitecture to `x86_64`, and declares a fake external
+`gcc@11.4.0` at `/usr` so Spack does not try to bootstrap a compiler.
+
+The GCC 11 compiler is also written into `~/.spack/linux/compilers.yaml` at
+startup by `worker.js`.  All compiler invocations are intercepted by the shim.
 
 ### `spack_config/config.yaml`
 
 Disables checksum verification and SSL (unnecessary for a static demo), and sets
 `concretizer: clingo`.
+
+### `spack_config/repos.yaml`
+
+Overrides the builtin repo URL to point at the local path inside the unpacked
+archive (`$spack/var/spack/repos/spack_repo/builtin`) so Spack does not attempt
+to clone packages from GitHub.
 
 ---
 
@@ -198,7 +236,6 @@ The shim is intentionally loaded **before** any Spack import.  It patches:
 | Issue | Notes |
 |---|---|
 | **No real installation** | `spack install` is not supported — no build tools exist in the browser |
-| **Clingo WASM** | `spack spec` uses clingo for concretization; a WASM build is not yet bundled — use `spack config set concretizer:solver original` as a workaround with older Spack versions |
 | **Memory** | Pyodide + Spack source use ~200–400 MB of RAM in the browser tab |
 | **First load** | Downloading Pyodide (~10 MB) and spack-lite.tar.gz adds startup latency |
 | **SharedArrayBuffer** | The worker uses `importScripts` which requires the page to be served with the correct COOP/COEP headers if SharedArrayBuffer is needed |
@@ -218,6 +255,8 @@ Edit the `KEEP_PKGS` array in `scripts/make_spack_lite.sh` and re-run the script
 SPACK_VERSION=v0.22.0 bash scripts/make_spack_lite.sh
 # Use the develop branch (default)
 SPACK_VERSION=develop bash scripts/make_spack_lite.sh
+# Override the spack-packages branch as well
+SPACK_PACKAGES_VERSION=develop bash scripts/make_spack_lite.sh
 ```
 
 ### Updating the shims
@@ -230,6 +269,22 @@ so a browser reload picks up changes immediately (no rebuild needed).
 Edit `shell.py`.  Like `shim_system.py`, it is fetched at runtime, so a
 browser reload is sufficient.  Add a new `_cmd_<name>` function and register
 it in the `_BUILTINS` dictionary at the bottom of the file.
+
+### Local file:// testing
+
+`scripts/build_local.py` bundles `worker.js`, `shim_system.py`, and `shell.py`
+into a self-contained `local/index.html` that can be opened directly from the
+filesystem without a web server.
+
+### Running the test suite
+
+```bash
+pip install pytest pytest-timeout clingo
+pytest tests/ -v --timeout=300
+```
+
+CI also runs a Playwright Chromium browser smoke-test (`scripts/smoke_test_site_browser.mjs`)
+against a fully-assembled `_site/` directory to catch worker startup regressions.
 
 ---
 

@@ -214,14 +214,20 @@ async function init() {
       WebAssembly.instantiate = function patchedInstantiate(source, importObject) {
         if (importObject && importObject.env && _cppExTagHolder.tag) {
           // Pyodide's env object is non-extensible in Chrome, so direct
-          // assignment of __cpp_exception silently fails.  Instead, create a
-          // fresh plain-object copy of env (spread copies enumerable own
-          // properties) and inject the tag there, then wrap importObject to
-          // point at the new env.  This guarantees the tag is present
-          // regardless of whether the original env is frozen/sealed.
+          // assignment of __cpp_exception silently fails.  Spread ({...env})
+          // also loses non-enumerable properties such as env.memory, causing
+          // a secondary "memory import must be a WebAssembly.Memory" LinkError.
+          // Use Object.getOwnPropertyDescriptors to capture ALL own properties
+          // (enumerable and non-enumerable alike), override __cpp_exception,
+          // then create a fresh extensible object with those descriptors.
+          const envDescriptors = Object.getOwnPropertyDescriptors(importObject.env);
+          envDescriptors.__cpp_exception = {
+            value: _cppExTagHolder.tag,
+            writable: true, enumerable: true, configurable: true,
+          };
           importObject = {
             ...importObject,
-            env: { ...importObject.env, __cpp_exception: _cppExTagHolder.tag },
+            env: Object.create(Object.getPrototypeOf(importObject.env), envDescriptors),
           };
         }
         return _origInstantiate.call(WebAssembly, source, importObject);

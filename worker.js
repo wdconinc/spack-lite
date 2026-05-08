@@ -378,13 +378,14 @@ async function init() {
       }
       const clingoWheelBytes = new Uint8Array(await clingoWheelResp.arrayBuffer());
       pyodide.FS.writeFile(`/${clingoWheelPath}`, clingoWheelBytes);
-      await pyodide.runPythonAsync(
-        `import micropip; await micropip.install('emfs:///${clingoWheelPath}', deps=False)`
-      );
+      await pyodide.runPythonAsync(`
+import micropip
+await micropip.install('emfs:///${clingoWheelPath}', deps=False)
+`);
     } catch (clingoErr) {
       console.warn(
         'clingo wheel not available — bootstrap will be attempted by Spack:',
-        clingoErr?.message ?? clingoErr,
+        clingoErr?.message || String(clingoErr),
       );
     }
 

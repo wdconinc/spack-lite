@@ -173,7 +173,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Download clingo wheel artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4.1.3
         with:
           name: clingo-wheel
           path: /tmp/clingo-wheel

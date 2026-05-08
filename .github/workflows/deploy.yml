@@ -58,8 +58,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.ccache
-          key: ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-${{ runner.os }}
+          key: ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
+            ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-${{ runner.os }}-
             ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-
             ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-
 
@@ -75,7 +76,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.ccache
-          key: ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-${{ runner.os }}
+          key: ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-${{ runner.os }}-${{ github.run_id }}
 
       - name: Assemble site artefacts
         run: |

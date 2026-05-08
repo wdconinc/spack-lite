@@ -85,10 +85,12 @@ jobs:
           cp shim_system.py _site/
           cp shell.py      _site/
           cp spack-lite.tar.gz _site/
-          # Copy the wheel to a stable filename so worker.js can always fetch
-          # it as 'clingo.whl' regardless of the exact version string.
-          # build_clingo_pyodide.sh guarantees exactly one .whl in the output dir.
-          cp "$(echo /tmp/clingo-wheel/*.whl)" _site/clingo.whl
+          # Preserve the wheel basename so micropip can parse a valid wheel
+          # filename when installing from URL.
+          wheel_path="$(echo /tmp/clingo-wheel/*.whl)"
+          wheel_name="$(basename "$wheel_path")"
+          cp "$wheel_path" "_site/${wheel_name}"
+          printf '%s\n' "$wheel_name" > _site/clingo-wheel-name.txt
 
       - name: Upload Pages artefact
         uses: actions/upload-pages-artifact@v3

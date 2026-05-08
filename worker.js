@@ -304,9 +304,12 @@ async function init() {
         const wheelNameResponse = await fetch(wheelNameUrl);
         if (wheelNameResponse.ok) {
           const wheelName = (await wheelNameResponse.text()).trim();
-          // Allow only a wheel basename (no path separators); '-' is valid in
-          // wheel names as a field separator per wheel filename conventions.
-          if (/^[A-Za-z0-9._+-]+\.whl$/.test(wheelName)) clingoWheelPath = wheelName;
+          // Allow only a clingo wheel basename (no path separators); '-' is
+          // valid in wheel names as a field separator per wheel conventions.
+          if (
+            wheelName.startsWith('clingo-') &&
+            /^[A-Za-z0-9._+-]+\.whl$/.test(wheelName)
+          ) clingoWheelPath = wheelName;
         }
       } catch (e) {
         // Fall back to legacy clingo.whl path.

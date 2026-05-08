@@ -90,7 +90,7 @@ jobs:
           shopt -s nullglob
           wheels=(/tmp/clingo-wheel/*.whl)
           if [ "${#wheels[@]}" -ne 1 ]; then
-            echo "Expected exactly one wheel in /tmp/clingo-wheel, found ${#wheels[@]}" >&2
+            echo "Expected exactly one wheel in /tmp/clingo-wheel, found ${#wheels[@]}: ${wheels[*]:-(none)}" >&2
             exit 1
           fi
           wheel_path="${wheels[0]}"

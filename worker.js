@@ -183,9 +183,10 @@ async function init() {
     // WebAssembly.instantiate during module initialization.
     const _cppExTagHolder = { tag: null };
     const _needsCppExWorkaround = typeof WebAssembly?.Tag === 'function';
+    let _origInstantiate = null;
     if (_needsCppExWorkaround) {
       _cppExTagHolder.tag = new WebAssembly.Tag({ parameters: ['i32'] });
-      const _origInstantiate = WebAssembly.instantiate;
+      _origInstantiate = WebAssembly.instantiate;
       WebAssembly.instantiate = function patchedInstantiate(source, importObject) {
         if (importObject?.env && _cppExTagHolder.tag) {
           importObject.env.__cpp_exception = _cppExTagHolder.tag;
@@ -201,6 +202,9 @@ async function init() {
       const pyTag = pyodide?._module?.asm?.__cpp_exception;
       if (pyTag instanceof WebAssembly.Tag) {
         _cppExTagHolder.tag = pyTag;
+      }
+      if (_origInstantiate) {
+        WebAssembly.instantiate = _origInstantiate;
       }
     }
 

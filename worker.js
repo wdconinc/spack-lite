@@ -214,15 +214,20 @@ async function init() {
     try {
       importScripts(PYODIDE_CDN);
       pyodide = await loadPyodide();
-    } finally {
-      // Always restore the original WebAssembly.instantiate regardless of
-      // whether Pyodide initialisation succeeded or threw.
+    } catch (pyodideErr) {
+      // Restore on early failure so we don't leave a permanent patch if we
+      // cannot proceed with initialisation.
       if (_needsCppExWorkaround) {
         WebAssembly.instantiate = _origInstantiate;
       }
+      throw pyodideErr;
     }
     // Prefer Pyodide's own runtime tag when available for better
     // cross-module C++ exception interoperability.
+    // Keep the WebAssembly.instantiate patch active until after micropip has
+    // finished loading clingo — clingo's .so needs env.__cpp_exception during
+    // WebAssembly.instantiate when loadDynlib is called inside micropip.install.
+    // (The Node.js smoke test never restores the patch for the same reason.)
     if (_needsCppExWorkaround) {
       const pyTag = pyodide?._module?.asm?.__cpp_exception;
       if (pyTag instanceof WebAssembly.Tag) {
@@ -387,6 +392,12 @@ await micropip.install('emfs:///${clingoWheelPath}', deps=False)
         'clingo wheel not available — bootstrap will be attempted by Spack:',
         clingoErr?.message || String(clingoErr),
       );
+    } finally {
+      // Restore WebAssembly.instantiate now that all dynamic library loading
+      // (clingo .so via micropip) is complete.
+      if (_needsCppExWorkaround) {
+        WebAssembly.instantiate = _origInstantiate;
+      }
     }
 
     // 5. Fetch and unpack spack-lite.tar.gz

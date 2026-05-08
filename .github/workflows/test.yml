@@ -117,7 +117,7 @@ jobs:
         run: python3 scripts/test_clingo_wheel.py /tmp/clingo-wheel
 
       - name: Set up Node.js for Pyodide smoke test
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           # Node.js 22 has WebAssembly Exception Handling (EH) built in as a
           # standard feature (no --experimental-wasm-eh flag needed), which is
@@ -203,7 +203,7 @@ jobs:
           printf '%s\n' "$wheel_name" > _site/clingo-wheel-name.txt
 
       - name: Set up Node.js for browser smoke test
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
 

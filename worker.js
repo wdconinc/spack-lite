@@ -295,8 +295,28 @@ async function init() {
     try {
       await pyodide.loadPackage('micropip');
       micropip = pyodide.pyimport('micropip');
-      // clingo.whl is served from the same directory as worker.js.
-      const clingoWheelUrl = new URL('clingo.whl', self.location.href).href;
+      // The deployed build publishes the wheel basename in
+      // clingo-wheel-name.txt so micropip can install using a valid wheel
+      // filename.  Keep clingo.whl as a backward-compatible fallback.
+      let clingoWheelPath = 'clingo.whl';
+      try {
+        const wheelNameUrl = new URL('clingo-wheel-name.txt', self.location.href).href;
+        const wheelNameResponse = await fetch(wheelNameUrl);
+        if (wheelNameResponse.ok) {
+          const wheelName = (await wheelNameResponse.text()).trim();
+          // Allow only a clingo wheel basename (no path separators) with
+          // conservative characters [A-Za-z0-9._+-] used by wheel filenames.
+          if (
+            wheelName.startsWith('clingo-') &&
+            !wheelName.includes('/') &&
+            !wheelName.includes('\\') &&
+            /^[A-Za-z0-9._+-]+\.whl$/.test(wheelName)
+          ) clingoWheelPath = wheelName;
+        }
+      } catch (e) {
+        // Fall back to legacy clingo.whl path.
+      }
+      const clingoWheelUrl = new URL(clingoWheelPath, self.location.href).href;
       await micropip.install(clingoWheelUrl);
     } catch (clingoErr) {
       console.warn('clingo wheel not available — bootstrap will be attempted by Spack:', clingoErr);

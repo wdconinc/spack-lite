@@ -37,7 +37,13 @@ const SPACK_LITE_URL = 'spack-lite.tar.gz';
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+let _commandStdoutCaptureChunks = null;
+
 function post(type, payload) {
+  if (type === 'stdout' && _commandStdoutCaptureChunks !== null) {
+    _commandStdoutCaptureChunks.push(String(payload?.text ?? ''));
+    return;
+  }
   self.postMessage({ type, ...payload });
 }
 
@@ -525,12 +531,25 @@ self.onmessage = async ({ data }) => {
     post('error', { message: 'Pyodide is not ready yet.' });
     return;
   }
+  if (_commandStdoutCaptureChunks !== null) {
+    post('error', { message: 'Another command is already running.' });
+    return;
+  }
 
   try {
+    _commandStdoutCaptureChunks = [];
     const { output, cwd } = await runShellCommand(data.command);
-    post('result', { output, cwd });
+    const capturedStdout = _commandStdoutCaptureChunks.join('');
+    // runShellCommand() should return a string output; when it returns an empty
+    // string, fall back to stdout captured from the Pyodide writer so browser
+    // callers still receive command text.
+    const hasStructuredOutput = typeof output === 'string' && output !== '';
+    const mergedOutput = hasStructuredOutput ? output : capturedStdout;
+    post('result', { output: mergedOutput, cwd });
   } catch (err) {
     post('error', { message: String(err) });
+  } finally {
+    _commandStdoutCaptureChunks = null;
   }
 };
 

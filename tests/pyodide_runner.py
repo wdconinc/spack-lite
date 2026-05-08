@@ -79,6 +79,16 @@ if "SPACK_USER_CONFIG_PATH" not in os.environ:
     os.environ["SPACK_USER_CONFIG_PATH"] = _cfg_tmp
 
 # ---------------------------------------------------------------------------
+# Optionally simulate Pyodide's lzma-unavailable environment.
+#
+# When SPACK_LITE_MOCK_LZMA_UNAVAILABLE=1 is set, lzma is removed from
+# sys.modules so that shim_system.py's `except ImportError:` block runs,
+# exactly as it would in Pyodide where lzma is not part of the stdlib.
+# ---------------------------------------------------------------------------
+if os.environ.get("SPACK_LITE_MOCK_LZMA_UNAVAILABLE"):
+    sys.modules["lzma"] = None  # `import lzma` raises ImportError when None
+
+# ---------------------------------------------------------------------------
 # Apply system shims
 # (monkey-patches subprocess, os, platform, grp, pwd, termios, tty, …)
 #

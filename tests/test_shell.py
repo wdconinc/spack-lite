@@ -168,6 +168,31 @@ class TestCat:
         assert r.returncode == 0
         assert "No such file or directory" in r.stdout
 
+    def test_reads_real_file(self, tmp_path):
+        test_file = tmp_path / "test.py"
+        test_file.write_text("# package.py content\nprint('hello')\n")
+        r = run_in_shell(f"cat {test_file}")
+        assert r.returncode == 0
+        assert "# package.py content" in r.stdout
+
+    def test_reads_real_file_with_lzma_unavailable(self, tmp_path):
+        """Regression: cat must not raise LZMAError when lzma is unavailable.
+
+        In Pyodide, lzma is unvendored from the stdlib.  The lzma shim in
+        shim_system.py previously defined ``open`` in the exec namespace,
+        shadowing the built-in open and causing _cmd_cat to raise LZMAError
+        instead of reading the file.
+        """
+        test_file = tmp_path / "package.py"
+        test_file.write_text("# zlib package\nversion('1.3')\n")
+        r = run_in_shell(
+            f"cat {test_file}",
+            extra_env={"SPACK_LITE_MOCK_LZMA_UNAVAILABLE": "1"},
+        )
+        assert r.returncode == 0
+        assert "# zlib package" in r.stdout
+        assert "lzma" not in r.stdout.lower()
+
 
 class TestGrep:
     def test_pipe_match(self):

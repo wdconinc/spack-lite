@@ -24,26 +24,32 @@ const host = '127.0.0.1';
 const port = 8765;
 const baseUrl = `http://${host}:${port}`;
 
+// -u disables Python stdout buffering so the startup message is not held
+// in a C-level buffer when stdout is a pipe (the default for child processes).
 const server = spawn(
   'python3',
-  ['-m', 'http.server', String(port), '--bind', host, '--directory', siteDir],
+  ['-u', '-m', 'http.server', String(port), '--bind', host, '--directory', siteDir],
   { stdio: ['ignore', 'pipe', 'pipe'] },
 );
 
-let serverStarted = false;
 let serverStderr = '';
-server.stdout.on('data', (chunk) => {
-  const text = chunk.toString();
-  if (!serverStarted && text.toLowerCase().includes('serving http')) serverStarted = true;
-});
-server.stderr.on('data', (chunk) => {
-  const text = chunk.toString();
-  serverStderr += text;
-  if (!serverStarted && text.toLowerCase().includes('serving http')) serverStarted = true;
-});
+server.stderr.on('data', (chunk) => { serverStderr += chunk.toString(); });
+server.stdout.on('data', () => {});  // drain stdout to avoid backpressure
 
+// Probe the HTTP server with GET requests rather than scraping startup text.
+// This is more reliable across Python versions and output buffering modes.
+let serverStarted = false;
 for (let i = 0; i < 40 && !serverStarted; i += 1) {
-  await delay(250);
+  try {
+    const resp = await fetch(`${baseUrl}/index.html`, {
+      signal: AbortSignal.timeout(500),
+    });
+    // Any HTTP response (200, 404, 500…) means the server accepted the
+    // connection — that is all we need to confirm it is running.
+    if (resp.status > 0) serverStarted = true;
+  } catch (_) {
+    await delay(250);
+  }
 }
 if (!serverStarted) {
   server.kill('SIGTERM');

@@ -91,8 +91,10 @@ try {
     return { output: value?.output ?? '', cwd: value?.cwd ?? '' };
   });
 
+  console.log('[browser-smoke] spack spec zlib output:', JSON.stringify(result.output.slice(0, 500)));
+
   if (!result.output || !result.output.includes('zlib')) {
-    throw new Error('spack spec zlib output missing expected content');
+    throw new Error(`spack spec zlib output missing expected content. Got: ${JSON.stringify(result.output.slice(0, 300))}`);
   }
 
   const joinedLogs = `${consoleLines.join('\n')}\n${pageErrors.join('\n')}`.toLowerCase();

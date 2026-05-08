@@ -6,8 +6,8 @@
  *  2. Load wasm-git (libgit2 compiled to WASM) and expose self.gitCall so
  *     that the Python subprocess shim can delegate real git operations
  *  3. Redirect stdout/stderr to the terminal
- *  4. Install clingo (Pyodide wasm32 wheel from potassco/clingo wip-20)
- *     via micropip so Spack's bootstrap check passes without a bootstrap step
+ *  4. Install clingo 5.7.1 (cffi-based wheel from Pyodide 0.27.3 CDN, classic
+ *     5.x API) via JS fetch + micropip emfs so Spack's bootstrap check passes
  *  5. Fetch and unpack spack-lite.tar.gz into /home/pyodide/spack (MEMFS)
  *  6. Add Spack to sys.path and set SPACK_ROOT / HOME / cwd
  *  7. Inject a fake compiler + package configuration into ~/.spack
@@ -313,14 +313,26 @@ async function init() {
     //    0.27.3 share the same ABI (pyodide_2024_0 / emscripten 3.1.58) so
     //    the wheel is binary-compatible.  cffi (a transitive dependency) is
     //    pre-bundled with Pyodide 0.26.4 and loaded first.
+    //
+    //    Use JS fetch() to download the wheel and install via emfs://.  This
+    //    is more reliable in a Worker context than passing a remote URL to
+    //    micropip.install() directly (micropip's internal fetch logic can be
+    //    affected by Python-level proxy/SSL settings).
+    //
     //    On failure we log a warning; Spack will fall through to its own
     //    bootstrap path and report a more specific error at concretization time.
     setStatus('loading', 'Installing clingo…');
     try {
       await pyodide.loadPackage(['cffi', 'micropip']);
+      const clingoResp = await fetch(CLINGO_WHEEL_URL);
+      if (!clingoResp.ok) {
+        throw new Error(`clingo wheel fetch failed (HTTP ${clingoResp.status})`);
+      }
+      const clingoBytes = new Uint8Array(await clingoResp.arrayBuffer());
+      pyodide.FS.writeFile('/clingo.whl', clingoBytes);
       await pyodide.runPythonAsync(`
 import micropip
-await micropip.install('${CLINGO_WHEEL_URL}', deps=False)
+await micropip.install('emfs:///clingo.whl', deps=False)
 import clingo
 `);
     } catch (clingoErr) {

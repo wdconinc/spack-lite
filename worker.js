@@ -177,8 +177,32 @@ async function init() {
   try {
     // 1. Load Pyodide
     setStatus('loading', 'Loading Pyodide…');
+    // Work around env.__cpp_exception tag import mismatches when loading
+    // dynamically linked extension modules (e.g., clingo .so) via micropip.
+    // This must happen before loadPyodide() because Emscripten captures
+    // WebAssembly.instantiate during module initialization.
+    const _cppExTagHolder = { tag: null };
+    const _needsCppExWorkaround = typeof WebAssembly?.Tag === 'function';
+    if (_needsCppExWorkaround) {
+      _cppExTagHolder.tag = new WebAssembly.Tag({ parameters: ['i32'] });
+      const _origInstantiate = WebAssembly.instantiate;
+      WebAssembly.instantiate = function patchedInstantiate(source, importObject) {
+        if (importObject?.env && _cppExTagHolder.tag) {
+          importObject.env.__cpp_exception = _cppExTagHolder.tag;
+        }
+        return _origInstantiate.call(WebAssembly, source, importObject);
+      };
+    }
     importScripts(PYODIDE_CDN);
     pyodide = await loadPyodide();
+    // Prefer Pyodide's own runtime tag when available for better
+    // cross-module C++ exception interoperability.
+    if (_needsCppExWorkaround && _cppExTagHolder.tag) {
+      const pyTag = pyodide?._module?.asm?.__cpp_exception;
+      if (pyTag instanceof WebAssembly.Tag) {
+        _cppExTagHolder.tag = pyTag;
+      }
+    }
 
     // 2. Load wasm-git (libgit2 compiled to WASM, sync browser variant).
     //    The sync variant uses synchronous XHR, which is only permitted

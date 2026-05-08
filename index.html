@@ -54,6 +54,13 @@
     #status-badge.packages-loading { background: #89b4fa; color: #1e1e2e; }
     #status-badge.error    { background: #f38ba8; color: #1e1e2e; }
 
+    #version-label {
+      font-size: 0.7rem;
+      color: #585b70;
+      margin-left: auto;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    }
+
     #terminal-wrapper {
       flex: 1;
       padding: 0.5rem;
@@ -71,6 +78,7 @@
 <header>
   <h1>⚗ Spack-Lite</h1>
   <span id="status-badge" class="loading">Loading Pyodide…</span>
+  <span id="version-label">__SPACK_LITE_VERSION__</span>
 </header>
 
 <div id="terminal-wrapper">

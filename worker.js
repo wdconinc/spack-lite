@@ -213,17 +213,16 @@ async function init() {
       _origInstantiate = WebAssembly.instantiate;
       WebAssembly.instantiate = function patchedInstantiate(source, importObject) {
         if (importObject && importObject.env && _cppExTagHolder.tag) {
-          // Always override __cpp_exception while this workaround is active.
-          // Pyodide may provide a tag with an incompatible signature for
-          // clingo's dynlib import, so preserving a pre-set value can still
-          // produce a LinkError wrapped by micropip as PythonError.
-          try {
-            importObject.env.__cpp_exception = _cppExTagHolder.tag;
-          } catch (_assignErr) {
-            // env may be non-extensible or frozen; fall through without
-            // injecting — the original call may still succeed or produce a
-            // more informative error than a silent crash here.
-          }
+          // Pyodide's env object is non-extensible in Chrome, so direct
+          // assignment of __cpp_exception silently fails.  Instead, create a
+          // fresh plain-object copy of env (spread copies enumerable own
+          // properties) and inject the tag there, then wrap importObject to
+          // point at the new env.  This guarantees the tag is present
+          // regardless of whether the original env is frozen/sealed.
+          importObject = {
+            ...importObject,
+            env: { ...importObject.env, __cpp_exception: _cppExTagHolder.tag },
+          };
         }
         return _origInstantiate.call(WebAssembly, source, importObject);
       };
@@ -241,10 +240,9 @@ async function init() {
     }
     // Prefer Pyodide's own runtime tag when available for better
     // cross-module C++ exception interoperability.
-    // Keep the WebAssembly.instantiate patch active until AFTER `import clingo`
-    // executes below — micropip.install only extracts the wheel; loadDynlib for
-    // clingo.so is triggered lazily at first import and needs env.__cpp_exception
-    // during WebAssembly.instantiate.
+    // Keep the WebAssembly.instantiate patch active until AFTER clingo is
+    // fully loaded — micropip.install calls loadDynlibsFromPackage which
+    // invokes WebAssembly.instantiate with env.__cpp_exception needed.
     // (The Node.js smoke test never restores the patch for the same reason.)
     if (_needsCppExWorkaround) {
       const pyTag = pyodide?._module?.asm?.__cpp_exception;
@@ -401,14 +399,12 @@ async function init() {
       }
       const clingoWheelBytes = new Uint8Array(await clingoWheelResp.arrayBuffer());
       pyodide.FS.writeFile(`/${clingoWheelPath}`, clingoWheelBytes);
-      // micropip.install only extracts the wheel to the filesystem; it does
-      // NOT load the .so via WebAssembly.instantiate.  The dynlib is loaded
-      // lazily by Python's import machinery the first time `import clingo` is
-      // executed.  We must force that import here — while the patched
-      // WebAssembly.instantiate is still active — so that the
-      // env.__cpp_exception tag is correctly injected during loadDynlib.
-      // Once clingo is cached in sys.modules, all later `import clingo` calls
-      // (e.g. from spack spec) are free and bypass loadDynlib entirely.
+      // micropip.install calls loadDynlibsFromPackage internally, which invokes
+      // WebAssembly.instantiate with clingo's .so — so the patch MUST be active
+      // throughout micropip.install.  The 'import clingo' below is a defensive
+      // belt-and-suspenders step: if a future Pyodide version defers loadDynlib
+      // to first import instead of install, clingo is still loaded while the
+      // patch is active.  In the common case it is a cheap sys.modules hit.
       await pyodide.runPythonAsync(`
 import micropip
 await micropip.install('emfs:///${clingoWheelPath}', deps=False)

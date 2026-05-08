@@ -221,14 +221,26 @@ async function init() {
           //     properties, again losing env.memory
           // Use a JS Proxy wrapper instead: it forwards all property lookups to
           // the original env transparently, overriding only __cpp_exception.
-          // This works regardless of whether env is frozen, a Proxy, or uses
-          // prototype-chain properties.
+          // Additionally provide a fallback for env.memory using the main
+          // Pyodide module's wasmMemory in case Pyodide's dynlib env does not
+          // include a valid WebAssembly.Memory (e.g. when importObject.env is
+          // a JsProxy of a Python dict that wraps memory as a non-Memory value).
           importObject = {
             ...importObject,
             env: new Proxy(importObject.env, {
               get(target, key) {
                 if (key === '__cpp_exception') return _cppExTagHolder.tag;
-                return target[key];
+                const val = target[key];
+                if (key === 'memory' && !(val instanceof WebAssembly.Memory)) {
+                  // val is undefined or not a WebAssembly.Memory — fall back to
+                  // the main Pyodide module's memory so dynlib instantiation
+                  // receives a valid WebAssembly.Memory import.
+                  const mem = pyodide?._module?.wasmMemory
+                    ?? pyodide?._module?.asm?.memory;
+                  console.log('[wasm-patch] env.memory fallback:', val, '→', mem);
+                  return mem ?? val;
+                }
+                return val;
               },
               has(target, key) {
                 if (key === '__cpp_exception') return true;

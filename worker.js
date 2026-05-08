@@ -6,8 +6,8 @@
  *  2. Load wasm-git (libgit2 compiled to WASM) and expose self.gitCall so
  *     that the Python subprocess shim can delegate real git operations
  *  3. Redirect stdout/stderr to the terminal
- *  4. Install clingo 5.7.1 (cffi-based wheel from Pyodide 0.27.3 CDN, classic
- *     5.x API) via JS fetch + micropip emfs so Spack's bootstrap check passes
+ *  4. Install clingo 5.7.1 via pyodide.loadPackage('clingo') — bundled in
+ *     Pyodide 0.27.3, classic 5.x API required by Spack's ASP solver
  *  5. Fetch and unpack spack-lite.tar.gz into /home/pyodide/spack (MEMFS)
  *  6. Add Spack to sys.path and set SPACK_ROOT / HOME / cwd
  *  7. Inject a fake compiler + package configuration into ~/.spack
@@ -24,19 +24,11 @@
 // ---------------------------------------------------------------------------
 // CDN URLs — pin to specific versions for reproducibility
 // ---------------------------------------------------------------------------
-const PYODIDE_CDN  = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js';
+const PYODIDE_CDN  = 'https://cdn.jsdelivr.net/pyodide/v0.27.3/full/pyodide.js';
 // wasm-git: libgit2 compiled to WebAssembly (sync browser variant).
 // Runs inside this Web Worker, which is the only context where synchronous
 // XHR (used for remote git operations) is permitted.
 const WASM_GIT_URL = 'https://cdn.jsdelivr.net/npm/wasm-git@0.0.14/lg2.js';
-
-// clingo 5.7.1 Pyodide wheel from Pyodide 0.27.3's distribution.
-// Pyodide 0.26.4 and 0.27.3 share the same ABI (pyodide_2024_0, emscripten
-// 3.1.58), so this cffi-based wheel is binary-compatible and carries the
-// classic clingo 5.x Python API that Spack's solver expects.
-// cffi (a transitive dependency) ships bundled with Pyodide 0.26.4 and is
-// loaded via pyodide.loadPackage('cffi') before micropip.install runs.
-const CLINGO_WHEEL_URL = 'https://cdn.jsdelivr.net/pyodide/v0.27.3/full/clingo-5.7.1-cp312-cp312-pyodide_2024_0_wasm32.whl';
 
 // URL of the stripped-down Spack tarball (relative to the page origin).
 // Build it with  scripts/make_spack_lite.sh  and serve it alongside index.html.
@@ -307,37 +299,20 @@ async function init() {
     // 3. Redirect stdout/stderr to the terminal
     await pyodide.runPythonAsync(STDOUT_REDIRECT);
 
-    // 4. Install clingo 5.7.1 from Pyodide 0.27.3's CDN distribution.
-    //    That wheel uses the classic cffi-based clingo 5.x API, which is what
-    //    Spack's solver (spack/solver/asp.py) expects.  Pyodide 0.26.4 and
-    //    0.27.3 share the same ABI (pyodide_2024_0 / emscripten 3.1.58) so
-    //    the wheel is binary-compatible.  cffi (a transitive dependency) is
-    //    pre-bundled with Pyodide 0.26.4 and loaded first.
-    //
-    //    Use JS fetch() to download the wheel and install via emfs://.  This
-    //    is more reliable in a Worker context than passing a remote URL to
-    //    micropip.install() directly (micropip's internal fetch logic can be
-    //    affected by Python-level proxy/SSL settings).
-    //
+    // 4. Install clingo.  Pyodide 0.27.3 bundles clingo 5.7.1 (cffi-based,
+    //    classic 5.x Python API) as a regular loadPackage() target.  This is
+    //    the API that Spack's solver (spack/solver/asp.py) expects:
+    //    clingo.Symbol, clingo.Control(args), clingo.ast.parse_files(files, cb).
+    //    loadPackage() fetches directly from the Pyodide CDN so no external
+    //    wheel fetch or WebAssembly.instantiate patching is needed.
     //    On failure we log a warning; Spack will fall through to its own
     //    bootstrap path and report a more specific error at concretization time.
     setStatus('loading', 'Installing clingo…');
     try {
-      await pyodide.loadPackage(['cffi', 'micropip']);
-      const clingoResp = await fetch(CLINGO_WHEEL_URL);
-      if (!clingoResp.ok) {
-        throw new Error(`clingo wheel fetch failed (HTTP ${clingoResp.status})`);
-      }
-      const clingoBytes = new Uint8Array(await clingoResp.arrayBuffer());
-      pyodide.FS.writeFile('/clingo.whl', clingoBytes);
-      await pyodide.runPythonAsync(`
-import micropip
-await micropip.install('emfs:///clingo.whl', deps=False)
-import clingo
-`);
+      await pyodide.loadPackage('clingo');
     } catch (clingoErr) {
       console.warn(
-        'clingo wheel not available — bootstrap will be attempted by Spack:',
+        'clingo load failed — bootstrap will be attempted by Spack:',
         clingoErr?.message || String(clingoErr),
       );
     }

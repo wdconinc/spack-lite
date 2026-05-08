@@ -6,15 +6,14 @@
  * classic clingo 5.x Python API works correctly.  This is the API that Spack's
  * solver (spack/solver/asp.py) uses.
  *
- * Usage (run from the directory where pyodide was installed via npm):
- *   node smoke_test_clingo_pyodide.mjs [wheel-dir-or-file]
+ * Pyodide 0.27.3 bundles clingo 5.7.1 as a native loadPackage() target.
  *
- * If a wheel path is provided the local file is installed; otherwise the
- * pre-built clingo 5.7.1 wheel is downloaded directly from the Pyodide CDN
- * (the same URL that worker.js uses at runtime).
+ * Usage (run from the directory where pyodide was installed via npm):
+ *   node smoke_test_clingo_pyodide.mjs
  *
  * The script imports 'pyodide' from node_modules/ in the current working
- * directory; run from the directory where `npm install pyodide` was executed.
+ * directory; run from the directory where `npm install pyodide@0.27.3` was
+ * executed.
  *
  * Tests performed:
  *   1. Import clingo and assert clingo.__version__ is a non-empty string.
@@ -25,43 +24,8 @@
  */
 
 import { loadPyodide } from 'pyodide';
-import { readFileSync, readdirSync, statSync } from 'fs';
-import { resolve, basename } from 'path';
 
-// ---------------------------------------------------------------------------
-// The canonical CDN wheel used by worker.js (clingo 5.7.1, pyodide_2024_0 ABI)
-// ---------------------------------------------------------------------------
-const CLINGO_WHEEL_URL = 'https://cdn.jsdelivr.net/pyodide/v0.27.3/full/clingo-5.7.1-cp312-cp312-pyodide_2024_0_wasm32.whl';
-
-// ---------------------------------------------------------------------------
-// Resolve wheel source: local path from CLI arg, or CDN URL
-// ---------------------------------------------------------------------------
-const arg = process.argv[2];
-let clingoWheelSource = CLINGO_WHEEL_URL;   // default: CDN
 let whlLocalPath = null;
-
-if (arg) {
-  try {
-    const st = statSync(arg);
-    if (st.isDirectory()) {
-      const whls = readdirSync(arg).filter(f => f.endsWith('.whl'));
-      if (whls.length === 0) {
-        console.error(`ERROR: no .whl file found in ${arg}`);
-        process.exit(1);
-      }
-      whlLocalPath = resolve(arg, whls[0]);
-    } else {
-      whlLocalPath = resolve(arg);
-    }
-    clingoWheelSource = `emfs:///${basename(whlLocalPath)}`;
-    console.log(`[smoke-test] Using local wheel: ${basename(whlLocalPath)}`);
-  } catch (err) {
-    console.error(`ERROR: cannot access path '${arg}': ${err.message}`);
-    process.exit(1);
-  }
-} else {
-  console.log(`[smoke-test] No local wheel specified — using CDN: ${CLINGO_WHEEL_URL}`);
-}
 
 // ---------------------------------------------------------------------------
 // Load Pyodide
@@ -71,31 +35,16 @@ const pyodide = await loadPyodide();
 console.log(`[smoke-test] Pyodide ${pyodide.version} ready.`);
 
 // ---------------------------------------------------------------------------
-// If using a local wheel, write it into the Emscripten FS first.
+// Load clingo via pyodide.loadPackage() — bundled in Pyodide 0.27.3.
 // ---------------------------------------------------------------------------
-if (whlLocalPath) {
-  const whlBytes = readFileSync(whlLocalPath);
-  pyodide.FS.writeFile(`/${basename(whlLocalPath)}`, whlBytes);
-  console.log(`[smoke-test] Wrote ${basename(whlLocalPath)} to emfs.`);
-}
-
-// ---------------------------------------------------------------------------
-// Load cffi (clingo 5.7.1 is cffi-based) then install clingo via micropip.
-// cffi is bundled as a Pyodide package so loadPackage() uses the local copy.
-// ---------------------------------------------------------------------------
-await pyodide.loadPackage(['cffi', 'micropip']);
-
-console.log(`[smoke-test] Installing clingo from ${clingoWheelSource}…`);
+console.log('[smoke-test] Loading clingo package…');
 try {
-  await pyodide.runPythonAsync(`
-import micropip
-await micropip.install('${clingoWheelSource}', deps=False)
-`);
+  await pyodide.loadPackage('clingo');
 } catch (err) {
-  console.error(`[smoke-test] ERROR: micropip install failed: ${err}`);
+  console.error(`[smoke-test] ERROR: loadPackage('clingo') failed: ${err}`);
   process.exit(1);
 }
-console.log('[smoke-test] clingo installed.');
+console.log('[smoke-test] clingo loaded.');
 
 // ---------------------------------------------------------------------------
 // Smoke test 1: import clingo and check __version__

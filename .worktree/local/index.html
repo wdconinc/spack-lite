@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spack-Lite — Browser Terminal</title>
+
+  <!-- xterm.js -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #1e1e2e;
+      color: #cdd6f4;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+    }
+
+    header {
+      background: #181825;
+      border-bottom: 1px solid #313244;
+      padding: 0.5rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-shrink: 0;
+    }
+
+    header h1 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #cba6f7;
+      letter-spacing: 0.05em;
+    }
+
+    #status-badge {
+      font-size: 0.75rem;
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      background: #313244;
+      color: #a6adc8;
+      transition: background 0.3s, color 0.3s;
+    }
+    #status-badge.loading  { background: #fab387; color: #1e1e2e; }
+    #status-badge.ready    { background: #a6e3a1; color: #1e1e2e; }
+    #status-badge.error    { background: #f38ba8; color: #1e1e2e; }
+
+    #terminal-wrapper {
+      flex: 1;
+      padding: 0.5rem;
+      overflow: hidden;
+    }
+
+    #terminal {
+      height: 100%;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>⚗ Spack-Lite</h1>
+  <span id="status-badge" class="loading">Loading Pyodide…</span>
+</header>
+
+<div id="terminal-wrapper">
+  <div id="terminal"></div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Terminal setup
+// ---------------------------------------------------------------------------
+const isCoarsePointer =
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(pointer: coarse)').matches;
+
+const term = new Terminal({
+  theme: {
+    background:  '#1e1e2e',
+    foreground:  '#cdd6f4',
+    cursor:      '#f5c2e7',
+    black:       '#45475a',
+    red:         '#f38ba8',
+    green:       '#a6e3a1',
+    yellow:      '#f9e2af',
+    blue:        '#89b4fa',
+    magenta:     '#cba6f7',
+    cyan:        '#89dceb',
+    white:       '#bac2de',
+    brightBlack: '#585b70',
+  },
+  fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+  fontSize: 14,
+  lineHeight: 1.3,
+  cursorStyle: 'block',
+  cursorBlink: true,
+  // Mobile browsers often cannot select canvas-rendered terminal output
+  // reliably. Enabling screenReaderMode exposes accessible text rows that can
+  // be selected/copied with native touch gestures.
+  screenReaderMode: isCoarsePointer,
+});
+const fitAddon = new FitAddon.FitAddon();
+term.loadAddon(fitAddon);
+term.open(document.getElementById('terminal'));
+function updateViewportHeight() {
+  const viewportHeight = window.visualViewport
+    ? window.visualViewport.height
+    : document.documentElement.clientHeight;
+  document.body.style.height = `${viewportHeight}px`;
+}
+
+function fitTerminal() {
+  fitAddon.fit();
+}
+
+let pendingViewportFrame = null;
+function scheduleViewportUpdate() {
+  if (pendingViewportFrame !== null) return;
+  pendingViewportFrame = requestAnimationFrame(() => {
+    pendingViewportFrame = null;
+    updateViewportHeight();
+    fitTerminal();
+  });
+}
+
+updateViewportHeight();
+fitTerminal();
+window.addEventListener('resize', scheduleViewportUpdate);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', scheduleViewportUpdate);
+}
+
+// Prevent mobile keyboards from autocorrecting / autocapitalising input,
+// which would garble the terminal line when space is typed after an
+// unrecognised word like "spack".
+if (term.textarea) {
+  term.textarea.setAttribute('autocorrect', 'off');
+  term.textarea.setAttribute('autocapitalize', 'none');
+  term.textarea.setAttribute('spellcheck', 'false');
+
+  // HTML attributes alone are not enough: on iOS/Android the keyboard
+  // still fires autocorrect replacements through the beforeinput/input
+  // event path, bypassing xterm.js's keydown handler entirely.  xterm.js
+  // processes these input events internally (not via term.onKey) and
+  // translates the textarea-value diff into backspace + insert sequences,
+  // making terminal content disappear ("disappearing lines").
+  //
+  // Intercepting beforeinput for insertReplacementText (autocorrect word
+  // replacement) and calling preventDefault() stops the browser from
+  // modifying the textarea value, so the subsequent input event carries
+  // no change and xterm.js sends nothing to the terminal.
+  // Composition-related inputTypes (insertFromComposition,
+  // deleteByComposition) are intentionally not blocked so that IME input
+  // (e.g. Japanese, Chinese) continues to work.
+  term.textarea.addEventListener('beforeinput', (e) => {
+    if (e.inputType === 'insertReplacementText' && e.cancelable) {
+      e.preventDefault();
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Input line editor — supports history navigation with ↑ / ↓
+// ---------------------------------------------------------------------------
+let inputBuffer  = '';
+let inputEnabled = false;
+let resolveInput = null;
+
+// Command history — newest entry is at the end.
+// historyIndex counts backwards from the end (-1 = not navigating).
+let cmdHistory   = [];
+let historyIndex = -1;
+let savedInput   = '';   // preserves in-progress input during history browsing
+
+// Current working directory shown in the prompt (updated after each command).
+let currentCwd = '~';
+
+function getPrompt() {
+  // Strip ASCII control characters (including ESC) to prevent terminal
+  // escape-sequence injection via crafted directory names.
+  const safeCwd = currentCwd.replace(/[\x00-\x1f\x7f]/g, '');
+  return `\x1b[32mspack-lite\x1b[0m:\x1b[34m${safeCwd}\x1b[0m$ `;
+}
+
+function enableInput() {
+  inputEnabled = true;
+}
+
+function disableInput() {
+  inputEnabled = false;
+}
+
+// Prevent the browser from scrolling the page when the user presses the
+// up/down arrow keys to navigate command history.  xterm.js calls
+// preventDefault() on most handled keys, but doing it explicitly here via
+// attachCustomKeyEventHandler is more reliable across browsers.
+// Returning true lets xterm.js continue to process the event normally so
+// that the arrow-key escape sequences still flow through to onData.
+term.attachCustomKeyEventHandler((e) => {
+  if (e.type === 'keydown' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+    e.preventDefault();
+  }
+  return true;
+});
+
+// Use onData instead of onKey so that mobile virtual-keyboard input is
+// captured.  onKey fires from keydown DOM events, which mobile browsers
+// often dispatch with key='Unidentified' / keyCode=0, leaving inputBuffer
+// empty and making Enter appear to delete the typed command.  onData is
+// fed by xterm.js's CompositionHelper which monitors the textarea's input
+// event — the only reliable path on mobile — and also fires for every
+// desktop keypress, so this single handler covers both cases.
+term.onData((data) => {
+  if (!inputEnabled) return;
+
+  if (data === '\r' || data === '\n') {             // Enter
+    const line = inputBuffer;
+    inputBuffer  = '';
+    historyIndex = -1;
+    savedInput   = '';
+    term.write('\r\n');
+    // Record non-empty commands in history (avoid consecutive duplicates).
+    if (line && (cmdHistory.length === 0 || line !== cmdHistory[cmdHistory.length - 1])) {
+      cmdHistory.push(line);
+    }
+    if (resolveInput) { resolveInput(line); resolveInput = null; }
+
+  } else if (data === '\x7f' || data === '\b') {    // Backspace / DEL
+    if (inputBuffer.length > 0) {
+      inputBuffer = inputBuffer.slice(0, -1);
+      term.write('\b \b');
+    }
+
+  } else if (data === '\x1b[A') {                   // ↑  — older history entry
+    if (cmdHistory.length === 0) return;
+    if (historyIndex === -1) savedInput = inputBuffer;
+    historyIndex = Math.min(historyIndex + 1, cmdHistory.length - 1);
+    const entry = cmdHistory[cmdHistory.length - 1 - historyIndex];
+    term.write('\r\x1b[K' + getPrompt() + entry);
+    inputBuffer = entry;
+
+  } else if (data === '\x1b[B') {                   // ↓  — newer history entry / restore
+    if (historyIndex === -1) return;
+    historyIndex -= 1;
+    const entry = historyIndex === -1 ? savedInput
+                                      : cmdHistory[cmdHistory.length - 1 - historyIndex];
+    term.write('\r\x1b[K' + getPrompt() + entry);
+    inputBuffer = entry;
+
+  } else if (data.length > 0 && !data.startsWith('\x1b')) {
+    // Printable characters.  On desktop this is a single character; on mobile
+    // it may be several characters at once (paste, autocomplete insertion).
+    // Filter using numeric code points: keep >= 0x20 and explicitly exclude
+    // DEL (0x7f) so that string-comparison edge cases can't slip control
+    // characters into inputBuffer or the terminal display.
+    const printable = [...data].filter(ch => {
+      const cp = ch.codePointAt(0);
+      return cp >= 0x20 && cp !== 0x7f;
+    }).join('');
+    if (printable) {
+      inputBuffer += printable;
+      term.write(printable);
+    }
+  }
+});
+
+function readLine() {
+  return new Promise(resolve => { resolveInput = resolve; });
+}
+
+// ---------------------------------------------------------------------------
+// Web Worker
+// ---------------------------------------------------------------------------
+const _workerBlob = new Blob(["const _LOCAL_BASE_URL = \"file:///home/wdconinc/git/spack-lite/.worktree/local/\";\n/**\n * worker.js \u2014 Pyodide Web Worker for Spack-Lite\n *\n * Responsibilities:\n *  1. Load Pyodide (WASM Python runtime)\n *  2. Load wasm-git (libgit2 compiled to WASM) and expose self.gitCall so\n *     that the Python subprocess shim can delegate real git operations\n *  3. Redirect stdout/stderr to the terminal\n *  4. Install clingo (Pyodide wasm32 wheel from potassco/clingo wip-20)\n *     via micropip so Spack's bootstrap check passes without a bootstrap step\n *  5. Fetch and unpack spack-lite.tar.gz into /home/pyodide/spack (MEMFS)\n *  6. Add Spack to sys.path and set SPACK_ROOT / HOME / cwd\n *  7. Inject a fake compiler + package configuration into ~/.spack\n *  8. Execute shim_system.py to monkey-patch os/platform/subprocess and\n *     install stubs for Pyodide-removed modules (termios, tty, readline,\n *     fcntl, grp, pwd)\n *  9. Execute shell.py to install the Python-backed POSIX shell interpreter\n * 10. Receive { type: 'run', command: '...' } messages and return results\n *     including the new working directory after each command\n */\n\n'use strict';\n\n// ---------------------------------------------------------------------------\n// CDN URLs \u2014 pin to specific versions for reproducibility\n// ---------------------------------------------------------------------------\nconst PYODIDE_CDN  = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js';\n// wasm-git: libgit2 compiled to WebAssembly (sync browser variant).\n// Runs inside this Web Worker, which is the only context where synchronous\n// XHR (used for remote git operations) is permitted.\nconst WASM_GIT_URL = 'https://cdn.jsdelivr.net/npm/wasm-git@0.0.14/lg2.js';\n\n// URL of the stripped-down Spack tarball (relative to the page origin).\n// Build it with  scripts/make_spack_lite.sh  and serve it alongside index.html.\nconst SPACK_LITE_URL = 'spack-lite.tar.gz';\n\n// Base URL for resolving local assets (shim_system.py, shell.py, spack archive,\n// clingo wheel).  When running as an inlined Blob URL (local file:// testing),\n// self.location.href is a blob:null/\u2026 URL and cannot resolve relative paths.\n// The build script (scripts/build_local.py) prepends\n//   const _LOCAL_BASE_URL = 'file:///\u2026/local/';\n// to the inlined worker source, which this variable picks up.\nconst _WORKER_BASE_URL = (function () {\n  if (typeof _LOCAL_BASE_URL !== 'undefined') return _LOCAL_BASE_URL; // injected by build_local.py\n  try { return new URL('.', self.location.href).href; } catch (e) { return ''; }\n}());\n\n// ---------------------------------------------------------------------------\n// Helpers\n// ---------------------------------------------------------------------------\nlet _commandStdoutCaptureChunks = null;\n\nfunction post(type, payload) {\n  if (type === 'stdout' && _commandStdoutCaptureChunks !== null) {\n    _commandStdoutCaptureChunks.push(String(payload?.text ?? ''));\n    return;\n  }\n  self.postMessage({ type, ...payload });\n}\n\nfunction setStatus(state, message) {\n  post('status', { state, message });\n}\n\n// Redirect Python stdout/stderr so we can stream it to the terminal.\nconst STDOUT_REDIRECT = `\nimport sys, js, io\n\nclass _JsWriter:\n    def write(self, text):\n        if text:\n            js.postMessage(js.Object.fromEntries([['type','stdout'],['text', text]]))\n    def flush(self):\n        pass\n    def isatty(self):\n        return False\n    def fileno(self):\n        raise io.UnsupportedOperation('fileno')\n\nsys.stdout = _JsWriter()\nsys.stderr = _JsWriter()\n`;\n\n// ---------------------------------------------------------------------------\n// Spack configuration injected into ~/.spack\n// ---------------------------------------------------------------------------\nconst COMPILERS_YAML = `\\\ncompilers:\n- compiler:\n    spec: gcc@11.4.0\n    paths:\n      cc: /usr/bin/gcc\n      cxx: /usr/bin/g++\n      f77: /usr/bin/gfortran\n      fc: /usr/bin/gfortran\n    flags: {}\n    operating_system: ubuntu22.04\n    target: x86_64\n    modules: []\n    environment: {}\n    extra_rpaths: []\n`;\n\nconst PACKAGES_YAML = `\\\npackages:\n  all:\n    target: [x86_64]\n    providers:\n      mpi: [openmpi]\n      blas: [openblas]\n      lapack: [openblas]\n`;\n\n// Override the default repos.yaml (which points to a remote git URL) with\n// a local path inside the unpacked spack-lite archive.  This prevents spack\n// from trying to clone packages from GitHub, which requires git and a live\n// network connection \u2014 neither of which works in a browser WASM environment.\nconst REPOS_YAML = `\\\nrepos:\n  builtin: $spack/var/spack/repos/spack_repo/builtin\n`;\n\nconst CONFIG_YAML = `\\\nconfig:\n  concretizer: clingo\n  checksum: false\n  verify_ssl: false\n  install_missing_compilers: false\n  build_jobs: 1\n  db_lock_timeout: 60\n`;\n\nconst CONCRETIZER_YAML = `\\\nconcretizer:\n  # Do not attempt to reuse previously installed packages from the spack\n  # database.  In the browser/Pyodide environment no packages are actually\n  # installed, so reuse is always false.  More importantly, spack develop\n  # (2025+) requires libc information for compiler packages when reusing;\n  # the fake gcc stub cannot provide that, causing concretization failures.\n  reuse: false\n`;\n\n// ---------------------------------------------------------------------------\n// Filesystem helpers (used by wasm-git \u2194 Pyodide FS bridging)\n// ---------------------------------------------------------------------------\n\n/**\n * Recursively create a directory path in an Emscripten FS instance.\n * Silently skips path components that already exist.\n */\nfunction _mkdirp(fs, path) {\n  const parts = path.split('/').filter(Boolean);\n  let p = '';\n  for (const part of parts) {\n    p += '/' + part;\n    try { fs.mkdir(p); } catch (e) { /* already exists \u2014 ignore */ }\n  }\n}\n\n/**\n * Recursively copy a directory tree from one Emscripten FS to another.\n * Used to bridge files cloned into wasm-git's MEMFS into Pyodide's MEMFS.\n *\n * @param {object} srcFS   - source Emscripten FS (lg.FS)\n * @param {string} srcPath - absolute path in the source FS\n * @param {object} dstFS   - destination Emscripten FS (pyodide.FS)\n * @param {string} dstPath - absolute path in the destination FS\n */\nfunction _copyTree(srcFS, srcPath, dstFS, dstPath) {\n  let stat;\n  try {\n    stat = srcFS.stat(srcPath);\n  } catch (e) {\n    return; // source path does not exist\n  }\n  if (srcFS.isDir(stat.mode)) {\n    try { dstFS.mkdir(dstPath); } catch (e) { /* already exists \u2014 ignore */ }\n    for (const entry of srcFS.readdir(srcPath)) {\n      if (entry === '.' || entry === '..') continue;\n      _copyTree(srcFS, srcPath + '/' + entry, dstFS, dstPath + '/' + entry);\n    }\n  } else {\n    dstFS.writeFile(dstPath, srcFS.readFile(srcPath));\n  }\n}\n\n// ---------------------------------------------------------------------------\n// Main initialisation\n// ---------------------------------------------------------------------------\nlet pyodide = null;\nlet lg      = null;  // wasm-git module handle (null until loaded)\n\nasync function init() {\n  try {\n    // 1. Load Pyodide\n    setStatus('loading', 'Loading Pyodide\u2026');\n    // Work around env.__cpp_exception tag import mismatches when loading\n    // dynamically linked extension modules (e.g., clingo .so) via micropip.\n    // This must happen before loadPyodide() because Emscripten captures\n    // WebAssembly.instantiate during module initialization.\n    const _cppExTagHolder = { tag: null };\n    let _needsCppExWorkaround = typeof WebAssembly.Tag === 'function';\n    let _origInstantiate = null;\n    if (_needsCppExWorkaround) {\n      try {\n        _cppExTagHolder.tag = new WebAssembly.Tag({ parameters: ['i32'] });\n      } catch (tagErr) {\n        console.warn('wasm __cpp_exception tag workaround unavailable:', tagErr);\n        _needsCppExWorkaround = false;\n      }\n    }\n    if (_needsCppExWorkaround) {\n      _origInstantiate = WebAssembly.instantiate;\n      WebAssembly.instantiate = function patchedInstantiate(source, importObject) {\n        if (importObject && importObject.env && _cppExTagHolder.tag) {\n          // Pyodide's env object is non-extensible in Chrome, so direct\n          // assignment of __cpp_exception silently fails.  Instead, create a\n          // fresh plain-object copy of env (spread copies enumerable own\n          // properties) and inject the tag there, then wrap importObject to\n          // point at the new env.  This guarantees the tag is present\n          // regardless of whether the original env is frozen/sealed.\n          importObject = {\n            ...importObject,\n            env: { ...importObject.env, __cpp_exception: _cppExTagHolder.tag },\n          };\n        }\n        return _origInstantiate.call(WebAssembly, source, importObject);\n      };\n    }\n    try {\n      importScripts(PYODIDE_CDN);\n      pyodide = await loadPyodide();\n    } catch (pyodideErr) {\n      // Restore on early failure so we don't leave a permanent patch if we\n      // cannot proceed with initialisation.\n      if (_needsCppExWorkaround) {\n        WebAssembly.instantiate = _origInstantiate;\n      }\n      throw pyodideErr;\n    }\n    // Prefer Pyodide's own runtime tag when available for better\n    // cross-module C++ exception interoperability.\n    // Keep the WebAssembly.instantiate patch active until AFTER clingo is\n    // fully loaded \u2014 micropip.install calls loadDynlibsFromPackage which\n    // invokes WebAssembly.instantiate with env.__cpp_exception needed.\n    // (The Node.js smoke test never restores the patch for the same reason.)\n    if (_needsCppExWorkaround) {\n      const pyTag = pyodide?._module?.asm?.__cpp_exception;\n      if (pyTag instanceof WebAssembly.Tag) {\n        _cppExTagHolder.tag = pyTag;\n      }\n    }\n\n    // 2. Load wasm-git (libgit2 compiled to WASM, sync browser variant).\n    //    The sync variant uses synchronous XHR, which is only permitted\n    //    inside a Web Worker \u2014 exactly where we are.\n    //    On failure we log a warning and continue; the subprocess shim in\n    //    shim_system.py will fall back to canned mock responses for git.\n    setStatus('loading', 'Loading wasm-git\u2026');\n    try {\n      // Capture wasm-git stdout/stderr via module overrides (must be set\n      // on globalThis BEFORE the module is imported so that the Emscripten\n      // runtime picks them up during initialisation).\n      let _gitOutputLines = [];\n      let _gitErrLines    = [];\n      globalThis.wasmGitModuleOverrides = {\n        print:    (line) => { _gitOutputLines.push(line); },\n        printErr: (line) => { _gitErrLines.push(line); },\n      };\n\n      const lg2mod = await import(WASM_GIT_URL);\n      lg = await lg2mod.default();\n\n      // Provide a minimal .gitconfig so libgit2 does not abort on missing\n      // user identity when committing (spack fetch does not commit, but\n      // having it avoids unnecessary warnings).\n      lg.FS.writeFile(\n        '/home/web_user/.gitconfig',\n        '[user]\\n  name = Spack Browser\\n  email = spack@browser.local\\n'\n      );\n\n      /**\n       * Execute a git command via wasm-git and return a JSON result object.\n       *\n       * Called synchronously from Python through Pyodide's `js` module:\n       *   js.gitCall(json.dumps(['clone', url, dest]))\n       *\n       * For `git clone`, the cloned tree is also copied from wasm-git's\n       * MEMFS into Pyodide's MEMFS so that Python can see the files.\n       *\n       * @param  {string} argsJson  JSON array of git argv (without 'git').\n       * @return {string}           JSON string: {stdout, stderr, returncode}.\n       */\n      self.gitCall = function gitCall(argsJson) {\n        const args = JSON.parse(argsJson);\n        const isClone = args[0] === 'clone';\n        // A clone with a destination path requires at least 3 args:\n        //   ['clone', '<url>', '<destPath>']\n        // When only the URL is given git infers the destination from it;\n        // in that case we cannot pre-create dirs or bridge the FS, so we\n        // only activate FS bridging when an explicit destination is present.\n        const destPath = isClone && args.length >= 3 ? args[args.length - 1] : null;\n        const parentDir = destPath ? destPath.substring(0, destPath.lastIndexOf('/')) : null;\n\n        // For clone, ensure the destination's parent directory exists in\n        // wasm-git's FS before git tries to create the repo directory.\n        if (parentDir) _mkdirp(lg.FS, parentDir);\n\n        _gitOutputLines = []; // reset capture buffers for this call\n        _gitErrLines    = [];\n        let returncode = 0;\n        try {\n          lg.callMain(args);\n        } catch (e) {\n          // Emscripten calls exit() when git finishes; this surfaces as an\n          // ExitStatus object with a numeric .status field.  Any non-zero\n          // status means git itself reported a failure.\n          if (e && typeof e.status === 'number') {\n            returncode = e.status;\n          } else if (e) {\n            // Unexpected JS error \u2014 treat as a generic failure.\n            returncode = 1;\n            _gitErrLines.push(e.message || String(e));\n            if (e.stack) _gitErrLines.push(e.stack);\n          }\n        }\n        const stdout = _gitOutputLines.join('\\n') + (_gitOutputLines.length ? '\\n' : '');\n        const stderr = _gitErrLines.join('\\n')    + (_gitErrLines.length    ? '\\n' : '');\n\n        // After clone, bridge the cloned tree from wasm-git's MEMFS into\n        // Pyodide's MEMFS so Python / spack can read the files.\n        // Only attempt the copy when an explicit destination was given AND\n        // the directory actually exists in wasm-git's FS (i.e. clone worked).\n        if (destPath !== null) {\n          let cloneSucceeded = false;\n          try { cloneSucceeded = lg.FS.isDir(lg.FS.stat(destPath).mode); } catch (e) { /* ignore */ }\n          if (cloneSucceeded) {\n            if (parentDir) _mkdirp(pyodide.FS, parentDir);\n            try {\n              _copyTree(lg.FS, destPath, pyodide.FS, destPath);\n            } catch (e) {\n              console.warn('wasm-git: FS bridge failed after clone:', e);\n            }\n          }\n        }\n\n        return JSON.stringify({ stdout, stderr, returncode });\n      };\n    } catch (gitErr) {\n      console.warn('wasm-git unavailable \u2014 git operations will use mock responses:', gitErr);\n    }\n\n    // 3. Redirect stdout/stderr to the terminal\n    await pyodide.runPythonAsync(STDOUT_REDIRECT);\n\n    // 4. Install clingo (Pyodide wasm32 wheel built from potassco/clingo wip-20).\n    //    This satisfies Spack's bootstrap check: spack.bootstrap.core calls\n    //    _python_import('clingo') first, and if the import succeeds it skips\n    //    the entire bootstrap procedure.  We install the wheel before Spack is\n    //    imported so the import is available from the very first spack call.\n    //    On failure (e.g. wheel not yet built or served) we log a warning and\n    //    continue \u2014 Spack will then fall through to its own bootstrap path and\n    //    report a more specific error at concretization time.\n    setStatus('loading', 'Installing clingo\u2026');\n    try {\n      await pyodide.loadPackage('micropip');\n      // The deployed build publishes the wheel basename in\n      // clingo-wheel-name.txt so micropip can install using a valid wheel\n      // filename.  Keep clingo.whl as a backward-compatible fallback.\n      let clingoWheelPath = 'clingo.whl';\n      try {\n        const wheelNameUrl = new URL('clingo-wheel-name.txt', _WORKER_BASE_URL).href;\n        const wheelNameResponse = await fetch(wheelNameUrl);\n        if (wheelNameResponse.ok) {\n          const wheelName = (await wheelNameResponse.text()).trim();\n          // Allow only a clingo wheel basename (no path separators) with\n          // conservative characters [A-Za-z0-9._+-] used by wheel filenames.\n          if (\n            wheelName.startsWith('clingo-') &&\n            !wheelName.includes('/') &&\n            !wheelName.includes('\\\\') &&\n            /^[A-Za-z0-9._+-]+\\.whl$/.test(wheelName)\n          ) clingoWheelPath = wheelName;\n        }\n      } catch (e) {\n        // Fall back to legacy clingo.whl path.\n      }\n      // Fetch the wheel binary and write it into Pyodide's Emscripten FS,\n      // then install via emfs:// with deps=False.  This mirrors the approach\n      // used in the Node.js smoke test and avoids relying on micropip's own\n      // HTTP-fetch logic (which can fail due to dependency-resolution network\n      // requests or browser-specific fetch restrictions in Web Workers).\n      // clingoWheelPath is already validated above to contain no path\n      // separators, so it is safe to use as an FS filename directly.\n      const clingoWheelUrl = new URL(clingoWheelPath, _WORKER_BASE_URL).href;\n      const clingoWheelResp = await fetch(clingoWheelUrl);\n      if (!clingoWheelResp.ok) {\n        throw new Error(`clingo wheel fetch failed (HTTP ${clingoWheelResp.status})`);\n      }\n      const clingoWheelBytes = new Uint8Array(await clingoWheelResp.arrayBuffer());\n      pyodide.FS.writeFile(`/${clingoWheelPath}`, clingoWheelBytes);\n      // micropip.install calls loadDynlibsFromPackage internally, which invokes\n      // WebAssembly.instantiate with clingo's .so \u2014 so the patch MUST be active\n      // throughout micropip.install.  The 'import clingo' below is a defensive\n      // belt-and-suspenders step: if a future Pyodide version defers loadDynlib\n      // to first import instead of install, clingo is still loaded while the\n      // patch is active.  In the common case it is a cheap sys.modules hit.\n      await pyodide.runPythonAsync(`\nimport micropip\nawait micropip.install('emfs:///${clingoWheelPath}', deps=False)\nimport clingo\n`);\n    } catch (clingoErr) {\n      console.warn(\n        'clingo wheel not available \u2014 bootstrap will be attempted by Spack:',\n        clingoErr?.message || String(clingoErr),\n      );\n    } finally {\n      // Restore WebAssembly.instantiate now that clingo has been imported and\n      // its .so is fully loaded into the WebAssembly runtime.\n      if (_needsCppExWorkaround) {\n        WebAssembly.instantiate = _origInstantiate;\n      }\n    }\n\n    // 5. Fetch and unpack spack-lite.tar.gz\n    setStatus('loading', 'Fetching spack-lite archive\u2026');\n    try {\n      const response = await fetch(new URL(SPACK_LITE_URL, _WORKER_BASE_URL).href);\n      if (response.ok) {\n        const buffer = await response.arrayBuffer();\n        setStatus('loading', 'Unpacking spack-lite\u2026');\n        await pyodide.runPythonAsync(`\nimport os\nos.makedirs('/home/pyodide/spack', exist_ok=True)\n`);\n        pyodide.unpackArchive(buffer, 'gztar', { extractDir: '/home/pyodide' });\n      }\n    } catch (fetchErr) {\n      console.warn('spack-lite.tar.gz not found \u2014 running in demo mode:', fetchErr);\n    }\n\n    // 6. Add Spack to sys.path (if unpacked) and set up the environment\n    setStatus('loading', 'Configuring environment\u2026');\n    // When spack-lite.tar.gz was not available, Spack commands will produce\n    // a clear \"module not found\" error in the terminal (demo mode).\n    await pyodide.runPythonAsync(`\nimport sys, os\n\nif os.path.isdir('/home/pyodide/spack/lib/spack'):\n    spack_lib = '/home/pyodide/spack/lib/spack'\n    spack_external = '/home/pyodide/spack/lib/spack/external'\n    for p in [spack_lib, spack_external]:\n        if p not in sys.path:\n            sys.path.insert(0, p)\n\n# Set SPACK_ROOT so Spack can locate its own config files\nos.environ['SPACK_ROOT'] = '/home/pyodide/spack'\nos.environ['HOME'] = '/home/pyodide'\n\n# Start in the spack root directory (only when unpacked; fall back to HOME in demo mode)\nif os.path.isdir('/home/pyodide/spack'):\n    os.chdir('/home/pyodide/spack')\nelse:\n    os.chdir('/home/pyodide')\n`);\n\n    // 7. Create ~/.spack configuration directories\n    await pyodide.runPythonAsync(`\nimport os\n\nspack_cfg_linux = '/home/pyodide/.spack/linux'\nos.makedirs(spack_cfg_linux, exist_ok=True)\n\ncfg_files = {\n    '/home/pyodide/.spack/config.yaml': ${JSON.stringify(CONFIG_YAML)},\n    '/home/pyodide/.spack/concretizer.yaml': ${JSON.stringify(CONCRETIZER_YAML)},\n    '/home/pyodide/.spack/linux/compilers.yaml': ${JSON.stringify(COMPILERS_YAML)},\n    '/home/pyodide/.spack/packages.yaml': ${JSON.stringify(PACKAGES_YAML)},\n    '/home/pyodide/.spack/repos.yaml': ${JSON.stringify(REPOS_YAML)},\n}\nfor path, content in cfg_files.items():\n    with open(path, 'w') as f:\n        f.write(content)\n`);\n\n    // 8. Load and execute the system shim\n    // shim_system.py is the single canonical source for all module shims.\n    // It is served from the same origin as worker.js; if it cannot be\n    // fetched the worker raises an error rather than continuing with a\n    // partial / out-of-date fallback.\n    setStatus('loading', 'Applying system shims\u2026');\n    const shimResponse = await fetch(new URL('shim_system.py', _WORKER_BASE_URL).href);\n    if (!shimResponse.ok) {\n      throw new Error(`Failed to fetch shim_system.py (HTTP ${shimResponse.status})`);\n    }\n    const shimCode = await shimResponse.text();\n    await pyodide.runPythonAsync(shimCode);\n\n    // 9. Load and execute the shell interpreter\n    // shell.py defines run_shell_command() which handles built-in POSIX-like\n    // commands (ls, cd, cat, grep, \u2026) and routes `spack` through the Spack\n    // Python API.  It must be loaded after shim_system.py so that the module\n    // shims are in place before any spack imports are attempted.\n    setStatus('loading', 'Loading shell\u2026');\n    const shellResponse = await fetch(new URL('shell.py', _WORKER_BASE_URL).href);\n    if (!shellResponse.ok) {\n      throw new Error(`Failed to fetch shell.py (HTTP ${shellResponse.status})`);\n    }\n    const shellCode = await shellResponse.text();\n    await pyodide.runPythonAsync(shellCode);\n\n    // 10. Done\n    setStatus('ready', 'Ready');\n\n  } catch (err) {\n    console.error('Pyodide init failed:', err);\n    setStatus('error', 'Init failed: ' + err.message);\n  }\n}\n\n// ---------------------------------------------------------------------------\n// Command runner\n// ---------------------------------------------------------------------------\n\nasync function runShellCommand(cmdStr) {\n  // run_shell_command() is defined by shell.py which is loaded during init().\n  // It returns a JSON string: {\"output\": \"...\", \"cwd\": \"...\"}.\n  const resultJson = await pyodide.runPythonAsync(\n    `run_shell_command(${JSON.stringify(cmdStr)})`\n  );\n  try {\n    const { output, cwd } = JSON.parse(resultJson);\n    return { output: output ?? '', cwd: cwd ?? '~' };\n  } catch (_) {\n    // Fallback: treat the raw return value as plain output\n    return { output: String(resultJson ?? ''), cwd: '~' };\n  }\n}\n\n// ---------------------------------------------------------------------------\n// Message handler\n// ---------------------------------------------------------------------------\nself.onmessage = async ({ data }) => {\n  if (data.type !== 'run') return;\n\n  if (!pyodide) {\n    post('error', { message: 'Pyodide is not ready yet.' });\n    return;\n  }\n  if (_commandStdoutCaptureChunks !== null) {\n    post('error', { message: 'Another command is already running.' });\n    return;\n  }\n\n  try {\n    _commandStdoutCaptureChunks = [];\n    const { output, cwd } = await runShellCommand(data.command);\n    const capturedStdout = _commandStdoutCaptureChunks.join('');\n    // runShellCommand() should return a string output; when it returns an empty\n    // string, fall back to stdout captured from the Pyodide writer so browser\n    // callers still receive command text.\n    const hasStructuredOutput = typeof output === 'string' && output !== '';\n    const mergedOutput = hasStructuredOutput ? output : capturedStdout;\n    post('result', { output: mergedOutput, cwd });\n  } catch (err) {\n    post('error', { message: String(err) });\n  } finally {\n    _commandStdoutCaptureChunks = null;\n  }\n};\n\n// ---------------------------------------------------------------------------\n// Bootstrap\n// ---------------------------------------------------------------------------\ninit();\n"],
+    { type: 'application/javascript' });
+const worker = new Worker(URL.createObjectURL(_workerBlob));
+const badge  = document.getElementById('status-badge');
+
+let pendingResolve = null;
+let pendingReject  = null;
+
+worker.onmessage = ({ data }) => {
+  switch (data.type) {
+    case 'status':
+      badge.className = data.state;
+      badge.textContent = data.message;
+      if (data.state === 'ready') startREPL();
+      if (data.state === 'error') {
+        term.write('\r\n\x1b[31m' + data.message + '\x1b[0m\r\n');
+      }
+      break;
+
+    case 'stdout':
+      // Convert LF → CR+LF for xterm.js
+      term.write(data.text.replace(/\n/g, '\r\n'));
+      break;
+
+    case 'result':
+      if (pendingResolve) { pendingResolve(data); pendingResolve = null; }
+      break;
+
+    case 'error':
+      if (pendingReject) { pendingReject(data.message); pendingReject = null; }
+      else term.write('\r\n\x1b[31mError: ' + data.message + '\x1b[0m\r\n');
+      break;
+
+    default:
+      console.warn('Unknown worker message', data);
+  }
+};
+
+function runCommand(cmdStr) {
+  return new Promise((resolve, reject) => {
+    pendingResolve = resolve;
+    pendingReject  = reject;
+    worker.postMessage({ type: 'run', command: cmdStr });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// REPL
+// ---------------------------------------------------------------------------
+const HELP_TEXT = `
+\x1b[33mAvailable commands:\x1b[0m
+  \x1b[1mspack\x1b[0m list [<query>]        — list available packages
+  \x1b[1mspack\x1b[0m info <package>        — show package metadata
+  \x1b[1mspack\x1b[0m spec <spec>           — concretize a spec
+  \x1b[1mls\x1b[0m [-la] [<path>]          — list directory contents
+  \x1b[1mcd\x1b[0m [<path>]               — change directory  (\x1b[2m~ supported\x1b[0m)
+  \x1b[1mpwd\x1b[0m                        — print working directory
+  \x1b[1mcat\x1b[0m <file>                 — print file contents
+  \x1b[1mecho\x1b[0m <text>                — print text
+  \x1b[1mgrep\x1b[0m [-inv] <pat> [<file>] — search for pattern
+  \x1b[1mhead\x1b[0m / \x1b[1mtail\x1b[0m [-n N] [<file>]  — first / last N lines
+  \x1b[1mmkdir\x1b[0m / \x1b[1mrm\x1b[0m / \x1b[1mcp\x1b[0m / \x1b[1mmv\x1b[0m       — file operations
+  \x1b[1menv\x1b[0m                        — show environment variables
+  \x1b[1mwhich\x1b[0m <cmd>                — locate a command or built-in
+  \x1b[1mfind\x1b[0m [<path>] [-name <pat>] [-type f|d] — find files
+  \x1b[1mhelp\x1b[0m                       — show this help
+  \x1b[1mclear\x1b[0m                      — clear the terminal
+  \x1b[2m↑ / ↓ arrow keys navigate command history\x1b[0m
+
+\x1b[2mTip: try  spack spec zlib+shared\x1b[0m
+\x1b[2mTip: try  ls /home/pyodide/spack/lib/spack | head -20\x1b[0m
+`;
+
+async function startREPL() {
+  term.write('\r\n\x1b[1m\x1b[35m⚗ Spack-Lite\x1b[0m  —  Spack inside your browser via Pyodide\r\n');
+  term.write(HELP_TEXT.replace(/\n/g, '\r\n'));
+
+  enableInput();
+
+  while (true) {
+    term.write(getPrompt());
+    const line = (await readLine()).trim();
+    if (!line) continue;
+
+    if (line === 'clear') { term.clear(); continue; }
+    if (line === 'help')  { term.write(HELP_TEXT.replace(/\n/g, '\r\n')); continue; }
+
+    // Send to worker
+    disableInput();
+    try {
+      const result = await runCommand(line);
+      if (result.output) {
+        term.write(result.output.replace(/\n/g, '\r\n'));
+      }
+      if (result.cwd !== undefined) {
+        currentCwd = result.cwd;
+      }
+    } catch (err) {
+      term.write('\x1b[31mError: ' + err + '\x1b[0m\r\n');
+    }
+    enableInput();
+  }
+}
+</script>
+</body>
+</html>

@@ -5,3 +5,12 @@ packages:
       mpi: [openmpi]
       blas: [openblas]
       lapack: [openblas]
+  gcc:
+    externals:
+    - spec: "gcc@11.4.0 languages='c,c++,fortran' os=ubuntu22.04"
+      prefix: /usr
+      extra_attributes:
+        compilers:
+          c: /usr/bin/gcc
+          cxx: /usr/bin/g++
+          fortran: /usr/bin/gfortran

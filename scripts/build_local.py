@@ -23,10 +23,26 @@ The generated file is written to  <out-dir>/index.html.  Open it with:
 import argparse
 import json
 import pathlib
+import subprocess
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
+VERSION_PLACEHOLDER = '__SPACK_LITE_VERSION__'
+
 WORKER_PLACEHOLDER = "const worker = new Worker('worker.js');"
+
+
+def git_describe() -> str:
+    """Return a version string from ``git describe``, or a short SHA fallback."""
+    try:
+        return subprocess.check_output(
+            ['git', 'describe', '--tags', '--always', '--dirty'],
+            cwd=REPO_ROOT,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return 'dev'
 
 
 def main() -> None:
@@ -67,6 +83,7 @@ def main() -> None:
         )
 
     patched_index = index_src.replace(WORKER_PLACEHOLDER, inline_worker, 1)
+    patched_index = patched_index.replace(VERSION_PLACEHOLDER, git_describe(), 1)
 
     out_file = out_dir / 'index.html'
     out_file.write_text(patched_index, encoding='utf-8')

@@ -182,13 +182,25 @@ async function init() {
     // This must happen before loadPyodide() because Emscripten captures
     // WebAssembly.instantiate during module initialization.
     const _cppExTagHolder = { tag: null };
-    const _needsCppExWorkaround = typeof WebAssembly?.Tag === 'function';
+    let _needsCppExWorkaround = typeof WebAssembly?.Tag === 'function';
     let _origInstantiate = null;
     if (_needsCppExWorkaround) {
-      _cppExTagHolder.tag = new WebAssembly.Tag({ parameters: ['i32'] });
+      try {
+        _cppExTagHolder.tag = new WebAssembly.Tag({ parameters: ['i32'] });
+      } catch (tagErr) {
+        console.warn('wasm __cpp_exception tag workaround unavailable:', tagErr);
+        _needsCppExWorkaround = false;
+      }
+    }
+    if (_needsCppExWorkaround) {
       _origInstantiate = WebAssembly.instantiate;
       WebAssembly.instantiate = function patchedInstantiate(source, importObject) {
-        if (importObject && importObject.env != null && _cppExTagHolder.tag) {
+        if (
+          importObject &&
+          importObject.env !== null &&
+          importObject.env !== undefined &&
+          _cppExTagHolder.tag
+        ) {
           importObject.env.__cpp_exception = _cppExTagHolder.tag;
         }
         return _origInstantiate.call(WebAssembly, source, importObject);

@@ -51,6 +51,7 @@
     }
     #status-badge.loading  { background: #fab387; color: #1e1e2e; }
     #status-badge.ready    { background: #a6e3a1; color: #1e1e2e; }
+    #status-badge.packages-loading { background: #89b4fa; color: #1e1e2e; }
     #status-badge.error    { background: #f38ba8; color: #1e1e2e; }
 
     #terminal-wrapper {
@@ -286,13 +287,14 @@ const badge  = document.getElementById('status-badge');
 
 let pendingResolve = null;
 let pendingReject  = null;
+let replStarted    = false;
 
 worker.onmessage = ({ data }) => {
   switch (data.type) {
     case 'status':
       badge.className = data.state;
       badge.textContent = data.message;
-      if (data.state === 'ready') startREPL();
+      if (data.state === 'ready' && !replStarted) { replStarted = true; startREPL(); }
       if (data.state === 'error') {
         term.write('\r\n\x1b[31m' + data.message + '\x1b[0m\r\n');
       }

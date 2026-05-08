@@ -51,6 +51,7 @@ jobs:
           cp shim_system.py _site/
           cp shell.py      _site/
           cp spack-lite.tar.gz _site/
+          cp spack-packages.tar.gz _site/
 
       - name: Upload Pages artefact
         uses: actions/upload-pages-artifact@v3

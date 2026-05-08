@@ -6,12 +6,15 @@
 # a browser's Pyodide/MEMFS environment.
 #
 # Usage:
-#   bash scripts/make_spack_lite.sh [SPACK_REPO] [OUTPUT_TARBALL]
+#   bash scripts/make_spack_lite.sh [SPACK_REPO] [OUTPUT_TARBALL] [OUTPUT_PKG_TARBALL]
 #
-#   SPACK_REPO      Path to (or URL of) a Spack clone.
-#                   Defaults to: /tmp/spack-src
-#   OUTPUT_TARBALL  Destination path for the produced archive.
-#                   Defaults to: spack-lite.tar.gz  (in the current directory)
+#   SPACK_REPO          Path to (or URL of) a Spack clone.
+#                       Defaults to: /tmp/spack-src
+#   OUTPUT_TARBALL      Destination path for the produced core archive.
+#                       Defaults to: spack-lite.tar.gz  (in the current directory)
+#   OUTPUT_PKG_TARBALL  Destination path for the full packages archive loaded
+#                       lazily in the browser background.
+#                       Defaults to: spack-packages.tar.gz  (in the current directory)
 #
 # Environment variables:
 #   SPACK_VERSION           Branch/tag of spack/spack to clone. Default: develop
@@ -27,19 +30,25 @@
 #       - .git/           (version history, ~50 MB)
 #       - lib/spack/docs/ and lib/spack/test/
 #       - share/spack/docker/
-#   3. Copy the builtin package recipes from spack-packages into the tarball
-#      at var/spack/repos/spack_repo/builtin/ (the v2 API path structure).
+#   3. Copy a seed set of builtin package recipes from spack-packages into
+#      spack-lite.tar.gz (KEEP_PKGS below).  These are available immediately
+#      when the browser interface becomes active.
+#   3b. Copy ALL builtin package recipes into spack-packages.tar.gz.  This
+#      archive is fetched lazily in the background so the full package set
+#      becomes available without delaying the initial page load.
 #   4. Inject the browser config files from spack_config/ into etc/spack/,
 #      including repos.yaml which overrides the default git remote URL with
 #      the local package path.
 #   5. Pack the result into a .tar.gz with the top-level directory "spack/".
 #
-# Demo packages kept (adjust KEEP_PKGS to change the set):
+# Seed packages in spack-lite.tar.gz (adjust KEEP_PKGS to change the set):
 #   autoconf automake bzip2 cmake curl diffutils expat findutils gcc
 #   gcc-runtime gdbm gettext hdf5 hwloc libaio libbsd libffi libiconv
 #   libpciaccess libsigsegv libtool libxml2 lz4 m4 ncurses numactl
 #   openblas openmpi openssl patch perl pkgconf python readline sqlite
 #   tar util-linux xz zlib zstd
+#
+# spack-packages.tar.gz contains all packages and is loaded lazily.
 # =============================================================================
 
 set -euo pipefail
@@ -49,6 +58,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 SPACK_REPO="${1:-/tmp/spack-src}"
 OUTPUT_TARBALL="${2:-${REPO_ROOT}/spack-lite.tar.gz}"
+OUTPUT_PKG_TARBALL="${3:-${REPO_ROOT}/spack-packages.tar.gz}"
 PACKAGES_REPO="${PACKAGES_REPO:-/tmp/spack-packages-src}"
 WORK_DIR="/tmp/spack-lite-build"
 SPACK_LITE_DIR="${WORK_DIR}/spack"
@@ -111,7 +121,11 @@ rsync -a --exclude='.git' \
          "${SPACK_REPO}/" "${SPACK_LITE_DIR}/"
 
 # ---------------------------------------------------------------------------
-# Step 3: Prune the package repository — keep only the demo set
+# Step 3: Populate the seed package set in spack-lite.tar.gz
+#
+#         KEEP_PKGS defines the packages that are available immediately when
+#         the browser interface becomes active.  All other packages are loaded
+#         lazily from spack-packages.tar.gz in the background.
 #
 #         Spack's new Package API v2.x stores packages in the separate
 #         spack/spack-packages repository under repos/spack_repo/builtin/.
@@ -123,7 +137,7 @@ BUILTIN_DST="${SPACK_LITE_DIR}/var/spack/repos/spack_repo/builtin"
 PKGS_DIR="${BUILTIN_DST}/packages"
 ORIG_PKGS_DIR="${BUILTIN_SRC}/packages"
 
-log "Pruning package repository — keeping ${#KEEP_PKGS[@]} packages …"
+log "Populating seed package set — keeping ${#KEEP_PKGS[@]} packages …"
 mkdir -p "${PKGS_DIR}"
 
 # Copy build_systems, __init__.py, and repo.yaml from spack-packages — these
@@ -196,7 +210,33 @@ log "Creating archive ${OUTPUT_TARBALL} …"
 (cd "${WORK_DIR}" && tar -czf "${OUTPUT_TARBALL}" spack/)
 
 SIZE=$(du -sh "${OUTPUT_TARBALL}" | cut -f1)
-log "Done!  Archive size: ${SIZE}"
-log "Place '$(basename "${OUTPUT_TARBALL}")' in the same directory as index.html"
+log "Core archive size: ${SIZE}"
+
+# ---------------------------------------------------------------------------
+# Step 7: Build spack-packages.tar.gz with ALL packages from spack-packages.
+#         This archive is fetched lazily in the browser background so the full
+#         package set becomes available without blocking the initial page load.
+# ---------------------------------------------------------------------------
+log "Building full packages archive ${OUTPUT_PKG_TARBALL} …"
+PKG_WORK_DIR="/tmp/spack-packages-build"
+PKG_BUILTIN_DST="${PKG_WORK_DIR}/spack/var/spack/repos/spack_repo/builtin"
+rm -rf "${PKG_WORK_DIR}"
+mkdir -p "${PKG_BUILTIN_DST}/packages"
+
+# Copy all packages from the spack-packages source.
+cp -r "${ORIG_PKGS_DIR}/." "${PKG_BUILTIN_DST}/packages/"
+
+# Remove .pyc / __pycache__ artefacts from the packages archive.
+find "${PKG_WORK_DIR}" -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
+find "${PKG_WORK_DIR}" -name '*.pyc' -delete 2>/dev/null || true
+
+(cd "${PKG_WORK_DIR}" && tar -czf "${OUTPUT_PKG_TARBALL}" spack/)
+rm -rf "${PKG_WORK_DIR}"
+
+PKG_SIZE=$(du -sh "${OUTPUT_PKG_TARBALL}" | cut -f1)
+log "Packages archive size: ${PKG_SIZE}  (loaded lazily in the browser background)"
+
+log "Place both '$(basename "${OUTPUT_TARBALL}")' and '$(basename "${OUTPUT_PKG_TARBALL}")'"
+log "in the same directory as index.html"
 log "Then serve the directory with a static HTTP server, e.g.:"
 log "  python3 -m http.server 8080"

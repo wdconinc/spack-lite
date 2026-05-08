@@ -34,6 +34,12 @@ const WASM_GIT_URL = 'https://cdn.jsdelivr.net/npm/wasm-git@0.0.14/lg2.js';
 // Build it with  scripts/make_spack_lite.sh  and serve it alongside index.html.
 const SPACK_LITE_URL = 'spack-lite.tar.gz';
 
+// URL of the full package archive loaded lazily in the browser background.
+// Built alongside spack-lite.tar.gz by scripts/make_spack_lite.sh.
+// When present, all Spack packages become available after the REPL is already
+// active.  When absent (local dev, demo) only the seed packages are available.
+const SPACK_PACKAGES_URL = 'spack-packages.tar.gz';
+
 // Base URL for resolving local assets (shim_system.py, shell.py, spack archive,
 // clingo wheel).  When running as an inlined Blob URL (local file:// testing),
 // self.location.href is a blob:null/… URL and cannot resolve relative paths.
@@ -181,6 +187,53 @@ function _copyTree(srcFS, srcPath, dstFS, dstPath) {
     }
   } else {
     dstFS.writeFile(dstPath, srcFS.readFile(srcPath));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Lazy package loader — runs after the REPL is active
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch spack-packages.tar.gz and unpack it into Pyodide's MEMFS in the
+ * background so the full Spack package set becomes available without
+ * blocking the initial page load.
+ *
+ * The archive must have the same structure as spack-lite.tar.gz
+ * (top-level directory "spack/") so it can be extracted with
+ * extractDir: '/home/pyodide' and merge into the existing tree.
+ *
+ * Runs fire-and-forget from init(); errors are logged but never re-thrown.
+ */
+async function loadPackagesBackground() {
+  try {
+    const url = new URL(SPACK_PACKAGES_URL, _WORKER_BASE_URL).href;
+    // Initiate the fetch first (before changing the badge) so that the
+    // 'ready' status message reaches the main thread before we send
+    // 'packages-loading'.  This guarantees startREPL() fires before the
+    // badge changes to 'packages-loading'.
+    const response = await fetch(url);
+    if (!response.ok) {
+      // File not present — silent fallback; only seed packages are available.
+      console.info(
+        'spack-packages.tar.gz not found — full package set not loaded.',
+      );
+      return;
+    }
+    setStatus('packages-loading', 'Loading packages\u2026');
+    const buffer = await response.arrayBuffer();
+    // Defer the (synchronous) unpack until no Python command is running so
+    // we do not modify the filesystem while Python is mid-execution.
+    while (_commandStdoutCaptureChunks !== null) {
+      await new Promise(r => setTimeout(r, 50));
+    }
+    pyodide.unpackArchive(buffer, 'gztar', { extractDir: '/home/pyodide' });
+    setStatus('ready', 'Ready');
+    post('stdout', { text: '\n\x1b[2m[spack-lite] Full package set loaded.\x1b[0m\n' });
+  } catch (err) {
+    console.warn('Background package loading failed:', err);
+    // Restore ready state in case we changed the badge to packages-loading.
+    setStatus('ready', 'Ready');
   }
 }
 
@@ -406,6 +459,12 @@ for path, content in cfg_files.items():
 
     // 10. Done
     setStatus('ready', 'Ready');
+
+    // 11. Lazily load the full package set in the background.
+    //     Intentionally not awaited — the REPL is immediately usable, and
+    //     the seed packages in spack-lite.tar.gz remain available while the
+    //     full archive downloads.
+    loadPackagesBackground();
 
   } catch (err) {
     console.error('Pyodide init failed:', err);

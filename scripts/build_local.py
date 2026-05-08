@@ -33,7 +33,7 @@ WORKER_PLACEHOLDER = "const worker = new Worker('worker.js');"
 
 
 def git_describe() -> str:
-    """Return a version string from ``git describe``, or a short SHA fallback."""
+    """Return a version string from ``git describe``, or 'dev' as a fallback."""
     try:
         return subprocess.check_output(
             ['git', 'describe', '--tags', '--always', '--dirty'],
@@ -42,6 +42,8 @@ def git_describe() -> str:
             text=True,
         ).strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
+        import sys
+        print('warning: git describe failed; using "dev" as version', file=sys.stderr)
         return 'dev'
 
 

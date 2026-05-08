@@ -304,7 +304,7 @@ async function init() {
         const wheelNameResponse = await fetch(wheelNameUrl);
         if (wheelNameResponse.ok) {
           const wheelName = (await wheelNameResponse.text()).trim();
-          if (wheelName.endsWith('.whl')) clingoWheelPath = wheelName;
+          if (/^[A-Za-z0-9._+-]+\.whl$/.test(wheelName)) clingoWheelPath = wheelName;
         }
       } catch (e) {
         // Fall back to legacy clingo.whl path.

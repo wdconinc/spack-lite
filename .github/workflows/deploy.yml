@@ -87,9 +87,16 @@ jobs:
           cp spack-lite.tar.gz _site/
           # Preserve the wheel basename so micropip can parse a valid wheel
           # filename when installing from URL.
-          wheel_path="$(echo /tmp/clingo-wheel/*.whl)"
+          shopt -s nullglob
+          wheels=(/tmp/clingo-wheel/*.whl)
+          if [ "${#wheels[@]}" -ne 1 ]; then
+            echo "Expected exactly one wheel in /tmp/clingo-wheel, found ${#wheels[@]}" >&2
+            exit 1
+          fi
+          wheel_path="${wheels[0]}"
           wheel_name="$(basename "$wheel_path")"
           cp "$wheel_path" "_site/${wheel_name}"
+          cp "$wheel_path" _site/clingo.whl
           printf '%s\n' "$wheel_name" > _site/clingo-wheel-name.txt
 
       - name: Upload Pages artefact

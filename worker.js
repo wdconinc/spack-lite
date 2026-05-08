@@ -196,16 +196,16 @@ async function init() {
       _origInstantiate = WebAssembly.instantiate;
       WebAssembly.instantiate = function patchedInstantiate(source, importObject) {
         if (importObject && importObject.env && _cppExTagHolder.tag) {
-          // Only inject the tag when the module did not already provide one,
-          // to avoid overwriting a valid module-supplied tag.
-          if (importObject.env.__cpp_exception === undefined) {
-            try {
-              importObject.env.__cpp_exception = _cppExTagHolder.tag;
-            } catch (_assignErr) {
-              // env may be non-extensible or frozen; fall through without
-              // injecting — the original call may still succeed or produce a
-              // more informative error than a silent crash here.
-            }
+          // Always override __cpp_exception while this workaround is active.
+          // Pyodide may provide a tag with an incompatible signature for
+          // clingo's dynlib import, so preserving a pre-set value can still
+          // produce a LinkError wrapped by micropip as PythonError.
+          try {
+            importObject.env.__cpp_exception = _cppExTagHolder.tag;
+          } catch (_assignErr) {
+            // env may be non-extensible or frozen; fall through without
+            // injecting — the original call may still succeed or produce a
+            // more informative error than a silent crash here.
           }
         }
         return _origInstantiate.call(WebAssembly, source, importObject);

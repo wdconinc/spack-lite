@@ -9,6 +9,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Run spack unit-test in simulated Pyodide shell
@@ -130,6 +133,13 @@ jobs:
           cp scripts/smoke_test_clingo_pyodide.mjs /tmp/pyodide-test/
           cd /tmp/pyodide-test && node smoke_test_clingo_pyodide.mjs /tmp/clingo-wheel
 
+      - name: Upload clingo wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clingo-wheel
+          path: /tmp/clingo-wheel/*.whl
+          if-no-files-found: error
+
       - name: Show ccache statistics
         if: always()
         run: ccache --show-stats
@@ -140,3 +150,69 @@ jobs:
         with:
           path: ~/.ccache
           key: ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-${{ runner.os }}
+
+  browser-smoke:
+    name: Browser smoke-test assembled site
+    runs-on: ubuntu-latest
+    needs: build-wheel
+    env:
+      SPACK_VERSION: develop
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Load Pyodide version config
+        run: grep -E "^[A-Za-z_][A-Za-z0-9_]*=" .github/pyodide-versions.env >> "$GITHUB_ENV"
+
+      - name: Verify Pyodide version sync with worker.js
+        run: python3 scripts/check_pyodide_version_sync.py
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download clingo wheel artifact
+        uses: actions/download-artifact@v4.1.3
+        with:
+          name: clingo-wheel
+          path: /tmp/clingo-wheel
+
+      - name: Build spack-lite.tar.gz
+        run: bash scripts/make_spack_lite.sh
+
+      - name: Assemble _site (deploy-like)
+        run: |
+          mkdir -p _site
+          cp index.html      _site/
+          cp worker.js       _site/
+          cp shim_system.py  _site/
+          cp shell.py        _site/
+          cp spack-lite.tar.gz _site/
+          shopt -s nullglob
+          wheels=(/tmp/clingo-wheel/*.whl)
+          if [ "${#wheels[@]}" -ne 1 ]; then
+            echo "Expected exactly one wheel in /tmp/clingo-wheel, but found ${#wheels[@]}. Files: ${wheels[*]:-(none)}" >&2
+            exit 1
+          fi
+          wheel_path="${wheels[0]}"
+          wheel_name="$(basename "$wheel_path")"
+          cp "$wheel_path" "_site/${wheel_name}"
+          cp "$wheel_path" _site/clingo.whl
+          printf '%s\n' "$wheel_name" > _site/clingo-wheel-name.txt
+
+      - name: Set up Node.js for browser smoke test
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install browser smoke-test dependencies
+        run: |
+          mkdir -p /tmp/browser-smoke
+          npm install --prefix /tmp/browser-smoke playwright@1.54.1
+          npx --prefix /tmp/browser-smoke playwright install --with-deps chromium
+
+      - name: Browser smoke-test assembled site
+        run: |
+          cp scripts/smoke_test_site_browser.mjs /tmp/browser-smoke/
+          cd /tmp/browser-smoke && node smoke_test_site_browser.mjs "$GITHUB_WORKSPACE/_site"

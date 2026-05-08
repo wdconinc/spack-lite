@@ -213,21 +213,28 @@ async function init() {
       _origInstantiate = WebAssembly.instantiate;
       WebAssembly.instantiate = function patchedInstantiate(source, importObject) {
         if (importObject && importObject.env && _cppExTagHolder.tag) {
-          // Pyodide's env object is non-extensible in Chrome, so direct
-          // assignment of __cpp_exception silently fails.  Spread ({...env})
-          // also loses non-enumerable properties such as env.memory, causing
-          // a secondary "memory import must be a WebAssembly.Memory" LinkError.
-          // Use Object.getOwnPropertyDescriptors to capture ALL own properties
-          // (enumerable and non-enumerable alike), override __cpp_exception,
-          // then create a fresh extensible object with those descriptors.
-          const envDescriptors = Object.getOwnPropertyDescriptors(importObject.env);
-          envDescriptors.__cpp_exception = {
-            value: _cppExTagHolder.tag,
-            writable: true, enumerable: true, configurable: true,
-          };
+          // Pyodide's env object may be non-extensible, frozen, or a Proxy —
+          // none of the copy-based approaches work reliably:
+          //   - direct assignment: silently fails on non-extensible objects
+          //   - spread {…env}: drops non-enumerable properties (e.g. env.memory)
+          //   - getOwnPropertyDescriptors: misses prototype-chain or Proxy-trap
+          //     properties, again losing env.memory
+          // Use a JS Proxy wrapper instead: it forwards all property lookups to
+          // the original env transparently, overriding only __cpp_exception.
+          // This works regardless of whether env is frozen, a Proxy, or uses
+          // prototype-chain properties.
           importObject = {
             ...importObject,
-            env: Object.create(Object.getPrototypeOf(importObject.env), envDescriptors),
+            env: new Proxy(importObject.env, {
+              get(target, key) {
+                if (key === '__cpp_exception') return _cppExTagHolder.tag;
+                return target[key];
+              },
+              has(target, key) {
+                if (key === '__cpp_exception') return true;
+                return key in target;
+              },
+            }),
           };
         }
         return _origInstantiate.call(WebAssembly, source, importObject);

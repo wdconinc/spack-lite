@@ -241,9 +241,10 @@ async function init() {
     }
     // Prefer Pyodide's own runtime tag when available for better
     // cross-module C++ exception interoperability.
-    // Keep the WebAssembly.instantiate patch active until after micropip has
-    // finished loading clingo — clingo's .so needs env.__cpp_exception during
-    // WebAssembly.instantiate when loadDynlib is called inside micropip.install.
+    // Keep the WebAssembly.instantiate patch active until AFTER `import clingo`
+    // executes below — micropip.install only extracts the wheel; loadDynlib for
+    // clingo.so is triggered lazily at first import and needs env.__cpp_exception
+    // during WebAssembly.instantiate.
     // (The Node.js smoke test never restores the patch for the same reason.)
     if (_needsCppExWorkaround) {
       const pyTag = pyodide?._module?.asm?.__cpp_exception;
@@ -400,9 +401,18 @@ async function init() {
       }
       const clingoWheelBytes = new Uint8Array(await clingoWheelResp.arrayBuffer());
       pyodide.FS.writeFile(`/${clingoWheelPath}`, clingoWheelBytes);
+      // micropip.install only extracts the wheel to the filesystem; it does
+      // NOT load the .so via WebAssembly.instantiate.  The dynlib is loaded
+      // lazily by Python's import machinery the first time `import clingo` is
+      // executed.  We must force that import here — while the patched
+      // WebAssembly.instantiate is still active — so that the
+      // env.__cpp_exception tag is correctly injected during loadDynlib.
+      // Once clingo is cached in sys.modules, all later `import clingo` calls
+      // (e.g. from spack spec) are free and bypass loadDynlib entirely.
       await pyodide.runPythonAsync(`
 import micropip
 await micropip.install('emfs:///${clingoWheelPath}', deps=False)
+import clingo
 `);
     } catch (clingoErr) {
       console.warn(
@@ -410,8 +420,8 @@ await micropip.install('emfs:///${clingoWheelPath}', deps=False)
         clingoErr?.message || String(clingoErr),
       );
     } finally {
-      // Restore WebAssembly.instantiate now that all dynamic library loading
-      // (clingo .so via micropip) is complete.
+      // Restore WebAssembly.instantiate now that clingo has been imported and
+      // its .so is fully loaded into the WebAssembly runtime.
       if (_needsCppExWorkaround) {
         WebAssembly.instantiate = _origInstantiate;
       }

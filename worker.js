@@ -34,6 +34,17 @@ const WASM_GIT_URL = 'https://cdn.jsdelivr.net/npm/wasm-git@0.0.14/lg2.js';
 // Build it with  scripts/make_spack_lite.sh  and serve it alongside index.html.
 const SPACK_LITE_URL = 'spack-lite.tar.gz';
 
+// Base URL for resolving local assets (shim_system.py, shell.py, spack archive,
+// clingo wheel).  When running as an inlined Blob URL (local file:// testing),
+// self.location.href is a blob:null/… URL and cannot resolve relative paths.
+// The build script (scripts/build_local.py) prepends
+//   const _LOCAL_BASE_URL = 'file:///…/local/';
+// to the inlined worker source, which this variable picks up.
+const _WORKER_BASE_URL = (function () {
+  if (typeof _LOCAL_BASE_URL !== 'undefined') return _LOCAL_BASE_URL; // injected by build_local.py
+  try { return new URL('.', self.location.href).href; } catch (e) { return ''; }
+}());
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -359,7 +370,7 @@ async function init() {
       // filename.  Keep clingo.whl as a backward-compatible fallback.
       let clingoWheelPath = 'clingo.whl';
       try {
-        const wheelNameUrl = new URL('clingo-wheel-name.txt', self.location.href).href;
+        const wheelNameUrl = new URL('clingo-wheel-name.txt', _WORKER_BASE_URL).href;
         const wheelNameResponse = await fetch(wheelNameUrl);
         if (wheelNameResponse.ok) {
           const wheelName = (await wheelNameResponse.text()).trim();
@@ -382,7 +393,7 @@ async function init() {
       // requests or browser-specific fetch restrictions in Web Workers).
       // clingoWheelPath is already validated above to contain no path
       // separators, so it is safe to use as an FS filename directly.
-      const clingoWheelUrl = new URL(clingoWheelPath, self.location.href).href;
+      const clingoWheelUrl = new URL(clingoWheelPath, _WORKER_BASE_URL).href;
       const clingoWheelResp = await fetch(clingoWheelUrl);
       if (!clingoWheelResp.ok) {
         throw new Error(`clingo wheel fetch failed (HTTP ${clingoWheelResp.status})`);
@@ -409,7 +420,7 @@ await micropip.install('emfs:///${clingoWheelPath}', deps=False)
     // 5. Fetch and unpack spack-lite.tar.gz
     setStatus('loading', 'Fetching spack-lite archive…');
     try {
-      const response = await fetch(SPACK_LITE_URL);
+      const response = await fetch(new URL(SPACK_LITE_URL, _WORKER_BASE_URL).href);
       if (response.ok) {
         const buffer = await response.arrayBuffer();
         setStatus('loading', 'Unpacking spack-lite…');
@@ -473,7 +484,7 @@ for path, content in cfg_files.items():
     // fetched the worker raises an error rather than continuing with a
     // partial / out-of-date fallback.
     setStatus('loading', 'Applying system shims…');
-    const shimResponse = await fetch('shim_system.py');
+    const shimResponse = await fetch(new URL('shim_system.py', _WORKER_BASE_URL).href);
     if (!shimResponse.ok) {
       throw new Error(`Failed to fetch shim_system.py (HTTP ${shimResponse.status})`);
     }
@@ -486,7 +497,7 @@ for path, content in cfg_files.items():
     // Python API.  It must be loaded after shim_system.py so that the module
     // shims are in place before any spack imports are attempted.
     setStatus('loading', 'Loading shell…');
-    const shellResponse = await fetch('shell.py');
+    const shellResponse = await fetch(new URL('shell.py', _WORKER_BASE_URL).href);
     if (!shellResponse.ok) {
       throw new Error(`Failed to fetch shell.py (HTTP ${shellResponse.status})`);
     }

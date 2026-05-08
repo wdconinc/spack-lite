@@ -33,7 +33,7 @@ jobs:
         run: python3 scripts/check_pyodide_version_sync.py
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 

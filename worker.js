@@ -308,6 +308,8 @@ async function init() {
           // valid in wheel names as a field separator per wheel conventions.
           if (
             wheelName.startsWith('clingo-') &&
+            !wheelName.includes('/') &&
+            !wheelName.includes('\\') &&
             /^[A-Za-z0-9._+-]+\.whl$/.test(wheelName)
           ) clingoWheelPath = wheelName;
         }

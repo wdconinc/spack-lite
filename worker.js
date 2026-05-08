@@ -341,10 +341,8 @@ async function init() {
     //    continue — Spack will then fall through to its own bootstrap path and
     //    report a more specific error at concretization time.
     setStatus('loading', 'Installing clingo…');
-    let micropip = null;
     try {
       await pyodide.loadPackage('micropip');
-      micropip = pyodide.pyimport('micropip');
       // The deployed build publishes the wheel basename in
       // clingo-wheel-name.txt so micropip can install using a valid wheel
       // filename.  Keep clingo.whl as a backward-compatible fallback.
@@ -366,12 +364,28 @@ async function init() {
       } catch (e) {
         // Fall back to legacy clingo.whl path.
       }
+      // Fetch the wheel binary and write it into Pyodide's Emscripten FS,
+      // then install via emfs:// with deps=False.  This mirrors the approach
+      // used in the Node.js smoke test and avoids relying on micropip's own
+      // HTTP-fetch logic (which can fail due to dependency-resolution network
+      // requests or browser-specific fetch restrictions in Web Workers).
+      // clingoWheelPath is already validated above to contain no path
+      // separators, so it is safe to use as an FS filename directly.
       const clingoWheelUrl = new URL(clingoWheelPath, self.location.href).href;
-      await micropip.install(clingoWheelUrl);
+      const clingoWheelResp = await fetch(clingoWheelUrl);
+      if (!clingoWheelResp.ok) {
+        throw new Error(`clingo wheel fetch failed (HTTP ${clingoWheelResp.status})`);
+      }
+      const clingoWheelBytes = new Uint8Array(await clingoWheelResp.arrayBuffer());
+      pyodide.FS.writeFile(`/${clingoWheelPath}`, clingoWheelBytes);
+      await pyodide.runPythonAsync(
+        `import micropip; await micropip.install('emfs:///${clingoWheelPath}', deps=False)`
+      );
     } catch (clingoErr) {
-      console.warn('clingo wheel not available — bootstrap will be attempted by Spack:', clingoErr);
-    } finally {
-      micropip?.destroy();
+      console.warn(
+        'clingo wheel not available — bootstrap will be attempted by Spack:',
+        clingoErr?.message ?? clingoErr,
+      );
     }
 
     // 5. Fetch and unpack spack-lite.tar.gz

@@ -55,7 +55,7 @@ jobs:
           echo "EM_COMPILER_WRAPPER=$(which ccache)" >> "$GITHUB_ENV"
 
       - name: Restore ccache objects
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ~/.ccache
           key: ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-${{ runner.os }}-${{ github.run_id }}
@@ -73,7 +73,7 @@ jobs:
 
       - name: Save ccache objects
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ~/.ccache
           key: ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-${{ runner.os }}-${{ github.run_id }}

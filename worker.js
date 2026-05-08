@@ -195,18 +195,32 @@ async function init() {
     if (_needsCppExWorkaround) {
       _origInstantiate = WebAssembly.instantiate;
       WebAssembly.instantiate = function patchedInstantiate(source, importObject) {
-        if (
-          importObject &&
-          importObject.env &&
-          _cppExTagHolder.tag
-        ) {
-          importObject.env.__cpp_exception = _cppExTagHolder.tag;
+        if (importObject && importObject.env && _cppExTagHolder.tag) {
+          // Only inject the tag when the module did not already provide one,
+          // to avoid overwriting a valid module-supplied tag.
+          if (importObject.env.__cpp_exception === undefined) {
+            try {
+              importObject.env.__cpp_exception = _cppExTagHolder.tag;
+            } catch (_assignErr) {
+              // env may be non-extensible or frozen; fall through without
+              // injecting — the original call may still succeed or produce a
+              // more informative error than a silent crash here.
+            }
+          }
         }
         return _origInstantiate.call(WebAssembly, source, importObject);
       };
     }
-    importScripts(PYODIDE_CDN);
-    pyodide = await loadPyodide();
+    try {
+      importScripts(PYODIDE_CDN);
+      pyodide = await loadPyodide();
+    } finally {
+      // Always restore the original WebAssembly.instantiate regardless of
+      // whether Pyodide initialisation succeeded or threw.
+      if (_needsCppExWorkaround) {
+        WebAssembly.instantiate = _origInstantiate;
+      }
+    }
     // Prefer Pyodide's own runtime tag when available for better
     // cross-module C++ exception interoperability.
     if (_needsCppExWorkaround) {
@@ -214,7 +228,6 @@ async function init() {
       if (pyTag instanceof WebAssembly.Tag) {
         _cppExTagHolder.tag = pyTag;
       }
-      WebAssembly.instantiate = _origInstantiate;
     }
 
     // 2. Load wasm-git (libgit2 compiled to WASM, sync browser variant).

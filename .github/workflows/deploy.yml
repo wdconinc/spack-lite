@@ -43,41 +43,6 @@ jobs:
           SPACK_VERSION: develop
         run: bash scripts/make_spack_lite.sh
 
-      - name: Install ccache
-        run: |
-          sudo apt-get install -y ccache
-          # Pre-create the cache directory so the save step doesn't warn
-          # "path does not exist" when the build fails before any ccache hit.
-          mkdir -p ~/.ccache
-          # Emscripten's exec_process uses os.execv (not execvp), which does NOT
-          # search PATH.  Resolve ccache to its absolute path and export it so
-          # that EM_COMPILER_WRAPPER contains a full path that os.execv can find.
-          echo "EM_COMPILER_WRAPPER=$(which ccache)" >> "$GITHUB_ENV"
-
-      - name: Restore ccache objects
-        uses: actions/cache/restore@v5
-        with:
-          path: ~/.ccache
-          key: ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: |
-            ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-${{ runner.os }}-
-            ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-
-            ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-
-
-      - name: Build clingo Pyodide wheel
-        run: bash scripts/build_clingo_pyodide.sh
-
-      - name: Show ccache statistics
-        if: always()
-        run: ccache --show-stats
-
-      - name: Save ccache objects
-        if: always()
-        uses: actions/cache/save@v5
-        with:
-          path: ~/.ccache
-          key: ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-${{ runner.os }}-${{ github.run_id }}
-
       - name: Assemble site artefacts
         run: |
           mkdir -p _site
@@ -86,19 +51,6 @@ jobs:
           cp shim_system.py _site/
           cp shell.py      _site/
           cp spack-lite.tar.gz _site/
-          # Preserve the wheel basename so micropip can parse a valid wheel
-          # filename when installing from URL.
-          shopt -s nullglob
-          wheels=(/tmp/clingo-wheel/*.whl)
-          if [ "${#wheels[@]}" -ne 1 ]; then
-            echo "Expected exactly one wheel in /tmp/clingo-wheel, found ${#wheels[@]}: ${wheels[*]:-(none)}" >&2
-            exit 1
-          fi
-          wheel_path="${wheels[0]}"
-          wheel_name="$(basename "$wheel_path")"
-          cp "$wheel_path" "_site/${wheel_name}"
-          cp "$wheel_path" _site/clingo.whl
-          printf '%s\n' "$wheel_name" > _site/clingo-wheel-name.txt
 
       - name: Upload Pages artefact
         uses: actions/upload-pages-artifact@v3

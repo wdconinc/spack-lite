@@ -71,91 +71,9 @@ jobs:
         env:
           SPACK_ROOT: ${{ env.SPACK_ROOT }}
 
-  build-wheel:
-    name: Build clingo Pyodide wheel
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Load Pyodide version config
-        run: grep -E "^[A-Za-z_][A-Za-z0-9_]*=" .github/pyodide-versions.env >> "$GITHUB_ENV"
-
-      - name: Verify Pyodide version sync with worker.js
-        run: python3 scripts/check_pyodide_version_sync.py
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install ccache
-        run: |
-          sudo apt-get install -y ccache
-          # Pre-create the cache directory so the save step doesn't warn
-          # "path does not exist" when the build fails before any ccache hit.
-          mkdir -p ~/.ccache
-          # Emscripten's exec_process uses os.execv (not execvp), which does NOT
-          # search PATH.  Resolve ccache to its absolute path and export it so
-          # that EM_COMPILER_WRAPPER contains a full path that os.execv can find.
-          echo "EM_COMPILER_WRAPPER=$(which ccache)" >> "$GITHUB_ENV"
-
-      - name: Restore ccache objects
-        uses: actions/cache/restore@v5
-        with:
-          path: ~/.ccache
-          key: ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: |
-            ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-${{ runner.os }}-
-            ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-
-            ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-
-
-      - name: Build clingo Pyodide wheel
-        run: bash scripts/build_clingo_pyodide.sh
-
-      - name: Verify wheel structure
-        run: python3 scripts/test_clingo_wheel.py /tmp/clingo-wheel
-
-      - name: Set up Node.js for Pyodide smoke test
-        uses: actions/setup-node@v6
-        with:
-          # Node.js 22 has WebAssembly Exception Handling (EH) built in as a
-          # standard feature (no --experimental-wasm-eh flag needed), which is
-          # required to load the clingo WASM binary compiled with -fwasm-exceptions.
-          node-version: '22'
-
-      - name: Install pyodide for wheel smoke test
-        run: |
-          mkdir -p /tmp/pyodide-test
-          npm install --prefix /tmp/pyodide-test pyodide@${{ env.PYODIDE_VERSION }}
-
-      - name: Smoke-test clingo wheel in Pyodide (Node.js)
-        run: |
-          cp scripts/smoke_test_clingo_pyodide.mjs /tmp/pyodide-test/
-          cd /tmp/pyodide-test && node smoke_test_clingo_pyodide.mjs /tmp/clingo-wheel
-
-      - name: Upload clingo wheel artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: clingo-wheel
-          path: /tmp/clingo-wheel/*.whl
-          if-no-files-found: error
-
-      - name: Show ccache statistics
-        if: always()
-        run: ccache --show-stats
-
-      - name: Save ccache objects
-        if: always()
-        uses: actions/cache/save@v5
-        with:
-          path: ~/.ccache
-          key: ccache-clingo-emscripten-${{ env.CLINGO_BRANCH }}-pyodide-${{ env.PYODIDE_VERSION }}-${{ runner.os }}-${{ github.run_id }}
-
   browser-smoke:
     name: Browser smoke-test assembled site
     runs-on: ubuntu-latest
-    needs: build-wheel
     env:
       SPACK_VERSION: develop
     steps:
@@ -173,12 +91,6 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Download clingo wheel artifact
-        uses: actions/download-artifact@v8.0.1
-        with:
-          name: clingo-wheel
-          path: /tmp/clingo-wheel
-
       - name: Build spack-lite.tar.gz
         run: bash scripts/make_spack_lite.sh
 
@@ -190,17 +102,6 @@ jobs:
           cp shim_system.py  _site/
           cp shell.py        _site/
           cp spack-lite.tar.gz _site/
-          shopt -s nullglob
-          wheels=(/tmp/clingo-wheel/*.whl)
-          if [ "${#wheels[@]}" -ne 1 ]; then
-            echo "Expected exactly one wheel in /tmp/clingo-wheel, but found ${#wheels[@]}. Files: ${wheels[*]:-(none)}" >&2
-            exit 1
-          fi
-          wheel_path="${wheels[0]}"
-          wheel_name="$(basename "$wheel_path")"
-          cp "$wheel_path" "_site/${wheel_name}"
-          cp "$wheel_path" _site/clingo.whl
-          printf '%s\n' "$wheel_name" > _site/clingo-wheel-name.txt
 
       - name: Set up Node.js for browser smoke test
         uses: actions/setup-node@v6

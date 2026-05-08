@@ -30,6 +30,14 @@ const PYODIDE_CDN  = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js';
 // XHR (used for remote git operations) is permitted.
 const WASM_GIT_URL = 'https://cdn.jsdelivr.net/npm/wasm-git@0.0.14/lg2.js';
 
+// clingo 5.7.1 Pyodide wheel from Pyodide 0.27.3's distribution.
+// Pyodide 0.26.4 and 0.27.3 share the same ABI (pyodide_2024_0, emscripten
+// 3.1.58), so this cffi-based wheel is binary-compatible and carries the
+// classic clingo 5.x Python API that Spack's solver expects.
+// cffi (a transitive dependency) ships bundled with Pyodide 0.26.4 and is
+// loaded via pyodide.loadPackage('cffi') before micropip.install runs.
+const CLINGO_WHEEL_URL = 'https://cdn.jsdelivr.net/pyodide/v0.27.3/full/clingo-5.7.1-cp312-cp312-pyodide_2024_0_wasm32.whl';
+
 // URL of the stripped-down Spack tarball (relative to the page origin).
 // Build it with  scripts/make_spack_lite.sh  and serve it alongside index.html.
 const SPACK_LITE_URL = 'spack-lite.tar.gz';
@@ -194,87 +202,8 @@ async function init() {
   try {
     // 1. Load Pyodide
     setStatus('loading', 'Loading Pyodide…');
-    // Work around env.__cpp_exception tag import mismatches when loading
-    // dynamically linked extension modules (e.g., clingo .so) via micropip.
-    // This must happen before loadPyodide() because Emscripten captures
-    // WebAssembly.instantiate during module initialization.
-    const _cppExTagHolder = { tag: null };
-    let _needsCppExWorkaround = typeof WebAssembly.Tag === 'function';
-    let _origInstantiate = null;
-    if (_needsCppExWorkaround) {
-      try {
-        _cppExTagHolder.tag = new WebAssembly.Tag({ parameters: ['i32'] });
-      } catch (tagErr) {
-        console.warn('wasm __cpp_exception tag workaround unavailable:', tagErr);
-        _needsCppExWorkaround = false;
-      }
-    }
-    if (_needsCppExWorkaround) {
-      _origInstantiate = WebAssembly.instantiate;
-      WebAssembly.instantiate = function patchedInstantiate(source, importObject) {
-        if (importObject && importObject.env && _cppExTagHolder.tag) {
-          // Pyodide's env object may be non-extensible, frozen, or a Proxy —
-          // none of the copy-based approaches work reliably:
-          //   - direct assignment: silently fails on non-extensible objects
-          //   - spread {…env}: drops non-enumerable properties (e.g. env.memory)
-          //   - getOwnPropertyDescriptors: misses prototype-chain or Proxy-trap
-          //     properties, again losing env.memory
-          // Use a JS Proxy wrapper instead: it forwards all property lookups to
-          // the original env transparently, overriding only __cpp_exception.
-          // Additionally provide a fallback for env.memory using the main
-          // Pyodide module's wasmMemory in case Pyodide's dynlib env does not
-          // include a valid WebAssembly.Memory (e.g. when importObject.env is
-          // a JsProxy of a Python dict that wraps memory as a non-Memory value).
-          importObject = {
-            ...importObject,
-            env: new Proxy(importObject.env, {
-              get(target, key) {
-                if (key === '__cpp_exception') return _cppExTagHolder.tag;
-                const val = target[key];
-                if (key === 'memory' && !(val instanceof WebAssembly.Memory)) {
-                  // val is undefined or not a WebAssembly.Memory — fall back to
-                  // the main Pyodide module's memory so dynlib instantiation
-                  // receives a valid WebAssembly.Memory import.
-                  const mem = pyodide?._module?.wasmMemory
-                    ?? pyodide?._module?.asm?.memory;
-                  console.log('[wasm-patch] env.memory fallback:', val, '→', mem);
-                  return mem ?? val;
-                }
-                return val;
-              },
-              has(target, key) {
-                if (key === '__cpp_exception') return true;
-                return key in target;
-              },
-            }),
-          };
-        }
-        return _origInstantiate.call(WebAssembly, source, importObject);
-      };
-    }
-    try {
-      importScripts(PYODIDE_CDN);
-      pyodide = await loadPyodide();
-    } catch (pyodideErr) {
-      // Restore on early failure so we don't leave a permanent patch if we
-      // cannot proceed with initialisation.
-      if (_needsCppExWorkaround) {
-        WebAssembly.instantiate = _origInstantiate;
-      }
-      throw pyodideErr;
-    }
-    // Prefer Pyodide's own runtime tag when available for better
-    // cross-module C++ exception interoperability.
-    // Keep the WebAssembly.instantiate patch active until AFTER clingo is
-    // fully loaded — micropip.install calls loadDynlibsFromPackage which
-    // invokes WebAssembly.instantiate with env.__cpp_exception needed.
-    // (The Node.js smoke test never restores the patch for the same reason.)
-    if (_needsCppExWorkaround) {
-      const pyTag = pyodide?._module?.asm?.__cpp_exception;
-      if (pyTag instanceof WebAssembly.Tag) {
-        _cppExTagHolder.tag = pyTag;
-      }
-    }
+    importScripts(PYODIDE_CDN);
+    pyodide = await loadPyodide();
 
     // 2. Load wasm-git (libgit2 compiled to WASM, sync browser variant).
     //    The sync variant uses synchronous XHR, which is only permitted
@@ -378,61 +307,20 @@ async function init() {
     // 3. Redirect stdout/stderr to the terminal
     await pyodide.runPythonAsync(STDOUT_REDIRECT);
 
-    // 4. Install clingo (Pyodide wasm32 wheel built from potassco/clingo wip-20).
-    //    This satisfies Spack's bootstrap check: spack.bootstrap.core calls
-    //    _python_import('clingo') first, and if the import succeeds it skips
-    //    the entire bootstrap procedure.  We install the wheel before Spack is
-    //    imported so the import is available from the very first spack call.
-    //    On failure (e.g. wheel not yet built or served) we log a warning and
-    //    continue — Spack will then fall through to its own bootstrap path and
-    //    report a more specific error at concretization time.
+    // 4. Install clingo 5.7.1 from Pyodide 0.27.3's CDN distribution.
+    //    That wheel uses the classic cffi-based clingo 5.x API, which is what
+    //    Spack's solver (spack/solver/asp.py) expects.  Pyodide 0.26.4 and
+    //    0.27.3 share the same ABI (pyodide_2024_0 / emscripten 3.1.58) so
+    //    the wheel is binary-compatible.  cffi (a transitive dependency) is
+    //    pre-bundled with Pyodide 0.26.4 and loaded first.
+    //    On failure we log a warning; Spack will fall through to its own
+    //    bootstrap path and report a more specific error at concretization time.
     setStatus('loading', 'Installing clingo…');
     try {
-      await pyodide.loadPackage('micropip');
-      // The deployed build publishes the wheel basename in
-      // clingo-wheel-name.txt so micropip can install using a valid wheel
-      // filename.  Keep clingo.whl as a backward-compatible fallback.
-      let clingoWheelPath = 'clingo.whl';
-      try {
-        const wheelNameUrl = new URL('clingo-wheel-name.txt', _WORKER_BASE_URL).href;
-        const wheelNameResponse = await fetch(wheelNameUrl);
-        if (wheelNameResponse.ok) {
-          const wheelName = (await wheelNameResponse.text()).trim();
-          // Allow only a clingo wheel basename (no path separators) with
-          // conservative characters [A-Za-z0-9._+-] used by wheel filenames.
-          if (
-            wheelName.startsWith('clingo-') &&
-            !wheelName.includes('/') &&
-            !wheelName.includes('\\') &&
-            /^[A-Za-z0-9._+-]+\.whl$/.test(wheelName)
-          ) clingoWheelPath = wheelName;
-        }
-      } catch (e) {
-        // Fall back to legacy clingo.whl path.
-      }
-      // Fetch the wheel binary and write it into Pyodide's Emscripten FS,
-      // then install via emfs:// with deps=False.  This mirrors the approach
-      // used in the Node.js smoke test and avoids relying on micropip's own
-      // HTTP-fetch logic (which can fail due to dependency-resolution network
-      // requests or browser-specific fetch restrictions in Web Workers).
-      // clingoWheelPath is already validated above to contain no path
-      // separators, so it is safe to use as an FS filename directly.
-      const clingoWheelUrl = new URL(clingoWheelPath, _WORKER_BASE_URL).href;
-      const clingoWheelResp = await fetch(clingoWheelUrl);
-      if (!clingoWheelResp.ok) {
-        throw new Error(`clingo wheel fetch failed (HTTP ${clingoWheelResp.status})`);
-      }
-      const clingoWheelBytes = new Uint8Array(await clingoWheelResp.arrayBuffer());
-      pyodide.FS.writeFile(`/${clingoWheelPath}`, clingoWheelBytes);
-      // micropip.install calls loadDynlibsFromPackage internally, which invokes
-      // WebAssembly.instantiate with clingo's .so — so the patch MUST be active
-      // throughout micropip.install.  The 'import clingo' below is a defensive
-      // belt-and-suspenders step: if a future Pyodide version defers loadDynlib
-      // to first import instead of install, clingo is still loaded while the
-      // patch is active.  In the common case it is a cheap sys.modules hit.
+      await pyodide.loadPackage(['cffi', 'micropip']);
       await pyodide.runPythonAsync(`
 import micropip
-await micropip.install('emfs:///${clingoWheelPath}', deps=False)
+await micropip.install('${CLINGO_WHEEL_URL}', deps=False)
 import clingo
 `);
     } catch (clingoErr) {
@@ -440,12 +328,6 @@ import clingo
         'clingo wheel not available — bootstrap will be attempted by Spack:',
         clingoErr?.message || String(clingoErr),
       );
-    } finally {
-      // Restore WebAssembly.instantiate now that clingo has been imported and
-      // its .so is fully loaded into the WebAssembly runtime.
-      if (_needsCppExWorkaround) {
-        WebAssembly.instantiate = _origInstantiate;
-      }
     }
 
     // 5. Fetch and unpack spack-lite.tar.gz

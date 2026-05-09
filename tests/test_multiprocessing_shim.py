@@ -506,39 +506,6 @@ class TestProcessPoolThreadFailureFallback:
 # ---------------------------------------------------------------------------
 
 _PREAMBLE_THREAD_STARTUP_FAILURE_AT_SUBMIT = f"""\
-import sys, os, builtins, threading
-
-_real_import = builtins.__import__
-
-_BLOCKED = {{'_multiprocessing', '_posixshmem'}}
-
-def _blocking_import(name, *args, **kwargs):
-    if name in _BLOCKED and name not in sys.modules:
-        raise ImportError("blocked: " + name)
-    return _real_import(name, *args, **kwargs)
-
-builtins.__import__ = _blocking_import
-
-for _key in list(sys.modules.keys()):
-    if 'multiprocessing' in _key or _key in _BLOCKED:
-        del sys.modules[_key]
-
-# Simulate musl/Emscripten where ENOSYS == 52 for os.pipe()
-def _fake_pipe():
-    raise OSError(52, "Function not implemented")
-os.pipe = _fake_pipe
-
-# Allow one thread startup (_can_start_threads probe), then fail subsequent
-# starts triggered by ProcessPoolExecutor.submit().
-_real_thread_start = threading.Thread.start
-_thread_starts = {{'count': 0}}
-def _flaky_thread_start(self):
-    _thread_starts['count'] += 1
-    if _thread_starts['count'] == 1:
-        return _real_thread_start(self)
-    raise RuntimeError("thread constructor failed: Resource temporarily unavailable")
-threading.Thread.start = _flaky_thread_start
-
 exec(compile(open({_SHIM_PATH!r}).read(), {_SHIM_PATH!r}, "exec"))
 """
 
@@ -563,6 +530,11 @@ class TestProcessPoolRuntimeThreadFailureFallback:
         """submit() should still succeed via serial fallback."""
         r = _run_threadfail_submit_shim_script(
             "import concurrent.futures\n"
+            "import concurrent.futures.process as _cfp\n"
+            "_real_submit = _cfp.ProcessPoolExecutor.submit\n"
+            "def _fail_submit(self, *args, **kwargs):\n"
+            "    raise RuntimeError('thread constructor failed: Resource temporarily unavailable')\n"
+            "_cfp.ProcessPoolExecutor.submit = _fail_submit\n"
             "with concurrent.futures.ProcessPoolExecutor(1) as ex:\n"
             "    fut = ex.submit(pow, 2, 8)\n"
             "    print(fut.result())\n"

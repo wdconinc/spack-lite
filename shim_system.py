@@ -1207,16 +1207,18 @@ def _is_pyodide():
 if _cf is not None:
     _REAL_PROCESS_POOL_EXECUTOR = _cf.ProcessPoolExecutor
     _FORCE_SERIAL_PROCESS_POOL = (not _can_start_threads()) or _is_pyodide()
+    _EMSCRIPTEN_ENOSYS_ERRNO = 52
+    _FALLBACK_OSERROR_ERRNOS = {
+        errno.EAGAIN,
+        errno.ENOSYS,
+        _EMSCRIPTEN_ENOSYS_ERRNO,
+    }
 
     def _should_fallback_process_pool(exc):
         """Return True for known thread/process-startup failures in constrained runtimes."""
-        # EAGAIN/EWOULDBLOCK (thread/process resources exhausted) and ENOSYS.
-        # Emscripten/musl paths encountered here may surface ENOSYS as errno 52.
-        if isinstance(exc, OSError) and getattr(exc, "errno", None) in (
-            errno.EAGAIN,
-            errno.ENOSYS,
-            52,
-        ):
+        # EAGAIN/EWOULDBLOCK (resource exhaustion) and ENOSYS. Some
+        # Emscripten/musl error paths surface ENOSYS as errno 52.
+        if isinstance(exc, OSError) and getattr(exc, "errno", None) in _FALLBACK_OSERROR_ERRNOS:
             return True
         _msg = str(exc).lower()
         return any(

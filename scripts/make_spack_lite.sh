@@ -42,17 +42,33 @@
 #   5. Pack the result into a .tar.gz with the top-level directory "spack/".
 #
 # Seed packages in spack-lite.tar.gz (adjust KEEP_PKGS to change the set):
-#   autoconf automake binutils bzip2 cmake compiler_wrapper curl diffutils expat
+#   autoconf automake binutils bzip2 cmake compiler_wrapper curl diffutils elfutils expat
 #   findutils gcc
-#   gcc_runtime gdbm gettext glibc gmake gnuconfig hdf5 hwloc jsoncpp libaio libarchive libbsd
-#   libffi libiconv libmng libpciaccess libsigsegv libtool libxcrypt libxml2 lz4 m4 mbedtls ncurses numactl
-#   openblas openmpi openssl patch perl pkgconf python readline sqlite
-#   tar util_linux xz zlib zstd
+#   gcc_runtime gdbm gettext glibc gmake gnuconfig hdf5 hwloc jsoncpp libaec libaio libarchive libbsd
+#   libffi libiconv libjpeg_turbo libmng libpciaccess libsigsegv libtool libxcrypt libxml2 lz4 m4 mbedtls ncurses numactl
+#   openblas openmpi openpbs openssl patch perl pkgconf python readline sqlite
+#   tar util_linux util_linux_uuid xz zlib zstd
 #
 # Note: spack Package API v2 uses underscores in directory names, so
 #   gcc-runtime → gcc_runtime   and   util-linux → util_linux.
 # libgfortran is a virtual package provided by gcc_runtime (not a real
 #   package directory); it must NOT appear in KEEP_PKGS.
+# gmake provides the 'make' virtual package; zlib (and many other packages)
+#   depend on it as a build tool.  Without it spack spec fails with an
+#   UnknownPackageError for 'make' or similar build-tool virtuals.
+#
+# Transitive deps of zlib (spack spec zlib) that KEEP_PKGS must include:
+#   compiler_wrapper gcc gcc_runtime glibc gmake zlib
+# All of these are present in KEEP_PKGS above.
+#
+# Virtual-provider packages required so spack can concretize with the seed set:
+#   util_linux_uuid — provides 'uuid' (required by python's uuid build variant)
+#   libjpeg_turbo   — provides 'jpeg' (required by libmng)
+#   libaec          — provides 'szip' (required by hdf5)
+#   openpbs         — provides 'pbs'  (required by openmpi's scheduler support)
+#   elfutils        — direct dep of binutils (+debuginfod variant)
+# Without these, spack's concretizer raises UnknownPackageError when scanning
+# all possible dependencies across the seed package set.
 #
 # spack-packages.tar.gz contains all packages and is loaded lazily.
 # =============================================================================
@@ -77,11 +93,11 @@ SPACK_LITE_DIR="${WORK_DIR}/spack"
 # glibc provides the 'libc' virtual package; without it spack spec fails with
 # UnknownPackageError for 'libc'.
 KEEP_PKGS=(
-  autoconf automake binutils bzip2 cmake curl diffutils expat findutils
+  autoconf automake binutils bzip2 cmake curl diffutils elfutils expat findutils
   compiler_wrapper gcc gcc_runtime glibc gmake gnuconfig
-  gdbm gettext hdf5 hwloc jsoncpp libaio libarchive libbsd libffi libiconv libmng libpciaccess
-  libsigsegv libtool libxcrypt libxml2 lz4 m4 mbedtls ncurses numactl openblas openmpi
-  openssl patch perl pkgconf python readline sqlite tar util_linux
+  gdbm gettext hdf5 hwloc jsoncpp libaec libaio libarchive libbsd libffi libiconv libjpeg_turbo libmng libpciaccess
+  libsigsegv libtool libxcrypt libxml2 lz4 m4 mbedtls ncurses numactl openblas openmpi openpbs
+  openssl patch perl pkgconf python readline sqlite tar util_linux util_linux_uuid
   xz zlib zstd
 )
 

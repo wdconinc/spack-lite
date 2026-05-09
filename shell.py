@@ -628,6 +628,12 @@ def _cmd_spack(args, stdin):
         _orig_gc = _gc.get_threshold()
         try:
             _spack_main.main(args)
+        except KeyboardInterrupt:
+            import traceback as _tb
+            # Show where the code was interrupted so the user can see which
+            # part of the solver or package loading was hanging.
+            buf.write('\nKeyboardInterrupt\nStack trace (interrupted at):\n')
+            buf.write(''.join(_tb.format_stack()))
         finally:
             # spack.main.main() applies debug/backtrace/gc settings but never
             # restores them.  Reset here so they don't bleed into subsequent
@@ -776,6 +782,10 @@ def run_shell_command(line):
                 stdin_text = f'{cmd_name}: command not found\n'
             else:
                 stdin_text = handler(cmd_args, stdin_text) or ''
+        except KeyboardInterrupt:
+            # Propagate Ctrl+C: let the REPL show the interrupt message already
+            # written to buf inside _cmd_spack and stop the pipeline.
+            break
         except Exception as exc:  # safety net: keep the shell alive if a handler raises unexpectedly
             stdin_text = f'Error in {stage!r}: {exc}\n'
 

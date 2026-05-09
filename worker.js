@@ -281,12 +281,22 @@ self.loadPackages = () => loadPackagesBackground();
 let pyodide = null;
 let lg      = null;  // wasm-git module handle (null until loaded)
 
+// Interrupt buffer passed from the main thread via { type: 'set-interrupt-buffer' }.
+// Stored here so it can be applied once Pyodide is ready, even if the message
+// arrives before init() completes.
+let _pendingInterruptBuffer = null;
+
 async function init() {
   try {
     // 1. Load Pyodide
     setStatus('loading', 'Loading Pyodide…');
     importScripts(PYODIDE_CDN);
     pyodide = await loadPyodide();
+
+    // Apply any interrupt buffer that arrived before Pyodide was ready.
+    if (_pendingInterruptBuffer) {
+      pyodide.setInterruptBuffer(_pendingInterruptBuffer);
+    }
 
     // 2. Load wasm-git (libgit2 compiled to WASM, sync browser variant).
     //    The sync variant uses synchronous XHR, which is only permitted
@@ -531,6 +541,17 @@ async function runShellCommand(cmdStr) {
 // Message handler
 // ---------------------------------------------------------------------------
 self.onmessage = async ({ data }) => {
+  if (data.type === 'set-interrupt-buffer') {
+    // Wired up by index.html after SharedArrayBuffer becomes available
+    // (requires COOP/COEP headers, provided by coi-serviceworker).
+    // Calling pyodide.setInterruptBuffer() lets the main thread raise
+    // KeyboardInterrupt in Python by writing 2 to interruptBuffer[0].
+    _pendingInterruptBuffer = data.buffer;
+    if (pyodide && data.buffer) {
+      pyodide.setInterruptBuffer(data.buffer);
+    }
+    return;
+  }
   if (data.type === 'load-packages') {
     loadPackagesBackground();
     return;

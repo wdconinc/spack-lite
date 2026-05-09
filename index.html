@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Spack-Lite — Browser Terminal</title>
 
+  <!-- coi-serviceworker: adds COOP/COEP headers via a service worker so that
+       SharedArrayBuffer (required for pyodide.setInterruptBuffer) is available
+       on GitHub Pages and other hosts that don't serve these headers natively.
+       Must be the first script to run so the SW is registered before Pyodide. -->
+  <script src="https://cdn.jsdelivr.net/npm/coi-serviceworker@0.1.9/coi-serviceworker.min.js"></script>
+
   <!-- xterm.js -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
@@ -61,6 +67,23 @@
       font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
     }
 
+    #cancel-btn {
+      display: none;
+      font-size: 0.75rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: 6px;
+      border: 1px solid #f38ba8;
+      background: transparent;
+      color: #f38ba8;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 0.15s, color 0.15s;
+    }
+    #cancel-btn:hover, #cancel-btn:active {
+      background: #f38ba8;
+      color: #1e1e2e;
+    }
+
     #terminal-wrapper {
       flex: 1;
       padding: 0.5rem;
@@ -78,6 +101,7 @@
 <header>
   <h1>⚗ Spack-Lite</h1>
   <span id="status-badge" class="loading">Loading Pyodide…</span>
+  <button id="cancel-btn" title="Interrupt running command (Ctrl+C)">⛔ Cancel</button>
   <span id="version-label">__SPACK_LITE_VERSION__</span>
 </header>
 
@@ -230,6 +254,24 @@ term.attachCustomKeyEventHandler((e) => {
 // event — the only reliable path on mobile — and also fires for every
 // desktop keypress, so this single handler covers both cases.
 term.onData((data) => {
+  // Ctrl+C (\x03) — always handled, even while a command is running.
+  // Raises KeyboardInterrupt in Python via the interrupt buffer so the user
+  // can abort a hung operation (e.g. spack spec solver loop).
+  if (data === '\x03') {
+    term.write('^C\r\n');
+    if (!inputEnabled) {
+      // A command is running — signal it to stop.
+      sendInterrupt();
+    } else {
+      // At the prompt — echo ^C and redraw the prompt with a clean buffer.
+      inputBuffer = '';
+      historyIndex = -1;
+      savedInput  = '';
+      term.write(getPrompt());
+    }
+    return;
+  }
+
   if (!inputEnabled) return;
 
   if (data === '\r' || data === '\n') {             // Enter
@@ -292,6 +334,46 @@ function readLine() {
 // ---------------------------------------------------------------------------
 const worker = new Worker('worker.js');
 const badge  = document.getElementById('status-badge');
+const cancelBtn = document.getElementById('cancel-btn');
+
+// ---------------------------------------------------------------------------
+// Interrupt buffer — allows the main thread to raise KeyboardInterrupt in
+// Pyodide (Python) running inside the Web Worker without terminating it.
+//
+// SharedArrayBuffer requires Cross-Origin-Opener-Policy: same-origin and
+// Cross-Origin-Embedder-Policy: require-corp headers, which are injected by
+// the coi-serviceworker loaded at the top of this page.
+//
+// Protocol (Pyodide convention):
+//   interruptBuffer[0] === 0  → no interrupt
+//   interruptBuffer[0] === 2  → raise KeyboardInterrupt (SIGINT)
+// ---------------------------------------------------------------------------
+let interruptBuffer = null;
+if (typeof SharedArrayBuffer !== 'undefined') {
+  interruptBuffer = new Int32Array(new SharedArrayBuffer(4));
+  // The worker receives the buffer after it has been created and the
+  // worker.onmessage handler is in place, so we post it immediately.
+  // worker.js calls pyodide.setInterruptBuffer(interruptBuffer) on receipt.
+  worker.postMessage({ type: 'set-interrupt-buffer', buffer: interruptBuffer });
+}
+
+/** Reset the interrupt buffer to 0 so the next command starts clean. */
+function resetInterruptBuffer() {
+  if (interruptBuffer) Atomics.store(interruptBuffer, 0, 0);
+}
+
+/** Raise KeyboardInterrupt in the running Python command, if possible. */
+function sendInterrupt() {
+  if (interruptBuffer) {
+    // Signal Python to raise KeyboardInterrupt.
+    Atomics.store(interruptBuffer, 0, 2);
+  } else {
+    // SharedArrayBuffer unavailable — terminate the worker and reload.
+    // This is a last-resort fallback for environments that cannot set COOP/COEP.
+    term.write('\r\n\x1b[33m[spack-lite] SharedArrayBuffer unavailable — reloading page to cancel.\x1b[0m\r\n');
+    setTimeout(() => location.reload(), 1500);
+  }
+}
 
 let pendingResolve = null;
 let pendingReject  = null;
@@ -328,6 +410,9 @@ worker.onmessage = ({ data }) => {
 };
 
 function runCommand(cmdStr) {
+  // Clear any leftover interrupt signal before starting a new command so that
+  // a previous Ctrl+C does not immediately cancel the next command.
+  resetInterruptBuffer();
   return new Promise((resolve, reject) => {
     pendingResolve = resolve;
     pendingReject  = reject;
@@ -358,10 +443,21 @@ const HELP_TEXT = `
   \x1b[1mhelp\x1b[0m                       — show this help
   \x1b[1mclear\x1b[0m                      — clear the terminal
   \x1b[2m↑ / ↓ arrow keys navigate command history\x1b[0m
+  \x1b[2mCtrl+C (or ⛔ Cancel button) interrupts a running command\x1b[0m
 
 \x1b[2mTip: try  spack spec zlib+shared\x1b[0m
 \x1b[2mTip: try  ls /home/pyodide/spack/lib/spack | head -20\x1b[0m
 `;
+
+// Show / hide the cancel button together with input enable/disable so that
+// mobile users always have a visible tap target to interrupt a running command.
+function showCancelBtn() { cancelBtn.style.display = 'inline-block'; }
+function hideCancelBtn()  { cancelBtn.style.display = 'none'; }
+
+cancelBtn.addEventListener('click', () => {
+  term.write('^C\r\n');
+  sendInterrupt();
+});
 
 async function startREPL() {
   term.write('\r\n\x1b[1m\x1b[35m⚗ Spack-Lite\x1b[0m  —  Spack inside your browser via Pyodide\r\n');
@@ -379,6 +475,7 @@ async function startREPL() {
 
     // Send to worker
     disableInput();
+    showCancelBtn();
     try {
       const result = await runCommand(line);
       if (result.output) {
@@ -390,6 +487,9 @@ async function startREPL() {
     } catch (err) {
       term.write('\x1b[31mError: ' + err + '\x1b[0m\r\n');
     }
+    hideCancelBtn();
+    // Reset the interrupt buffer so the next command starts clean.
+    resetInterruptBuffer();
     enableInput();
   }
 }

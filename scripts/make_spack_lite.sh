@@ -235,9 +235,13 @@ log "Pre-solving seed packages (populating concretization cache) …"
 # Ensure clingo is importable for the build-time pre-solve.
 if ! python3 -c "import clingo" 2>/dev/null; then
   log "  clingo not found — installing via pip …"
-  pip3 install clingo --quiet 2>/dev/null || \
-    pip install clingo --quiet 2>/dev/null || \
-    log "  WARNING: clingo install failed; skipping pre-solve"
+  _PIP_CMD="$(command -v pip3 2>/dev/null || command -v pip 2>/dev/null || echo '')"
+  if [[ -n "${_PIP_CMD}" ]]; then
+    "${_PIP_CMD}" install clingo --quiet 2>/dev/null || \
+      log "  WARNING: clingo install failed; skipping pre-solve"
+  else
+    log "  WARNING: pip not found; skipping pre-solve"
+  fi
 fi
 
 if python3 -c "import clingo" 2>/dev/null; then

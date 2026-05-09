@@ -145,7 +145,7 @@ class _FakePopen:
         self.stdout = io.BytesIO(self._stdout_bytes) if self._stdout_bytes else None
         self.stderr = io.BytesIO(self._stderr_bytes) if self._stderr_bytes else None
 
-    def communicate(self, input=None, timeout=None):  # noqa: A002
+    def communicate(self, input_data=None, timeout=None):
         return self._stdout_bytes, self._stderr_bytes
 
     def wait(self, timeout=None):

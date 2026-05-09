@@ -256,7 +256,7 @@ except Exception:
     setStatus('ready', 'Ready');
     post('stdout', { text: '\n\x1b[2m[spack-lite] Full package set loaded.\x1b[0m\n' });
     post('stdout', { text: (
-      '\x1b[33m\u26a0 WARNING\x1b[0m: The full package archive (~7\u202f000 packages) is now loaded.\n' +
+      '\x1b[33m\u26a0 WARNING\x1b[0m: The full package archive (~7,000 packages) is now loaded.\n' +
       'Running \x1b[1mspack spec\x1b[0m will cause the clingo solver to hang because\n' +
       'grounding that many packages is too slow for WebAssembly.\n' +
       'The seed package set already covers common specs such as \x1b[1mspack spec zlib\x1b[0m.\n' +
@@ -499,7 +499,7 @@ for path, content in cfg_files.items():
     setStatus('ready', 'Ready');
 
     // Note: spack-packages.tar.gz (full package set) is NOT loaded
-    // automatically because loading ~7 000 packages causes the clingo solver
+    // automatically because loading ~7,000 packages causes the clingo solver
     // to hang in the browser WASM environment when running `spack spec`.
     // Users can load it on demand with `spack load-packages`, but a warning
     // is shown explaining that `spack spec` should not be used afterward.

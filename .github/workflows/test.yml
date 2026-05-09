@@ -52,16 +52,18 @@ jobs:
         # IMPORTANT: copy ONLY the seed packages listed in KEEP_PKGS (from
         # scripts/make_spack_lite.sh) so that test_spack_spec_zlib catches
         # missing packages the same way a real browser session would.
-        # Loading all ~7 000 packages causes the clingo solver to hang in WASM.
+        # Loading all ~7,000 packages causes the clingo solver to hang in WASM.
         run: |
           git clone --depth 1 --branch develop \
               https://github.com/spack/spack-packages.git /tmp/spack-packages-src
 
-          # Parse KEEP_PKGS from make_spack_lite.sh.
-          KEEP_PKGS=($(bash -c '
-            eval "$(sed -n "/^KEEP_PKGS=(/,/^)/p" scripts/make_spack_lite.sh)"
-            echo "${KEEP_PKGS[@]}"
-          '))
+          # Parse KEEP_PKGS from make_spack_lite.sh without eval:
+          # use awk to extract lines strictly between KEEP_PKGS=( and its closing ),
+          # then filter to valid package name tokens (lowercase, digits, underscores).
+          KEEP_PKGS=($(awk '/^KEEP_PKGS=\(/{found=1; next} found && /^\)/{exit} found{print}' \
+            scripts/make_spack_lite.sh \
+            | tr ' ' '\n' \
+            | grep -E '^[a-z][a-z0-9_]+$'))
 
           SRC=/tmp/spack-packages-src/repos/spack_repo/builtin
           DST="${SPACK_ROOT}/var/spack/repos/spack_repo/builtin"

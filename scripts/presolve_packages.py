@@ -404,7 +404,7 @@ def main() -> int:
         exit_code = 0 if failed == 0 else 2
         # Only tolerate this specific class when *every* failure matches it;
         # if any other error appears we keep the build failure behavior.
-        if failed == overflow_failures > 0:
+        if failed > 0 and failed == overflow_failures:
             print(
                 "  WARNING: pre-solve failures matched known integer-overflow "
                 "errors in Spack concretization; keeping partial cache.",

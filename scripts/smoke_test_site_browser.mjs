@@ -105,7 +105,7 @@ try {
   const result = await page.evaluate(async () => {
     const timeoutMs = 180000;
     const smokeCommand = 'spack --version';
-    let timeoutId;
+    let timeoutId = null;
     const timedResult = await Promise.race([
       runCommand(smokeCommand),
       new Promise((_, reject) => {
@@ -114,7 +114,9 @@ try {
           timeoutMs,
         );
       }),
-    ]).finally(() => clearTimeout(timeoutId));
+    ]).finally(() => {
+      if (timeoutId !== null) clearTimeout(timeoutId);
+    });
     return { output: timedResult?.output ?? '', cwd: timedResult?.cwd ?? '' };
   });
 

@@ -42,7 +42,7 @@
 #   5. Pack the result into a .tar.gz with the top-level directory "spack/".
 #
 # Seed packages in spack-lite.tar.gz (adjust KEEP_PKGS to change the set):
-#   autoconf automake binutils bzip2 cmake compiler_wrapper curl diffutils expat
+#   autoconf automake binutils bzip2 cmake compiler_wrapper curl diffutils elfutils expat
 #   findutils gcc
 #   gcc_runtime gdbm gettext glibc gmake gnuconfig hdf5 hwloc jsoncpp libaio libarchive libbsd
 #   libffi libiconv libmng libpciaccess libsigsegv libtool libxcrypt libxml2 lz4 m4 mbedtls ncurses numactl
@@ -77,7 +77,7 @@ SPACK_LITE_DIR="${WORK_DIR}/spack"
 # glibc provides the 'libc' virtual package; without it spack spec fails with
 # UnknownPackageError for 'libc'.
 KEEP_PKGS=(
-  autoconf automake binutils bzip2 cmake curl diffutils expat findutils
+  autoconf automake binutils bzip2 cmake curl diffutils elfutils expat findutils
   compiler_wrapper gcc gcc_runtime glibc gmake gnuconfig
   gdbm gettext hdf5 hwloc jsoncpp libaio libarchive libbsd libffi libiconv libmng libpciaccess
   libsigsegv libtool libxcrypt libxml2 lz4 m4 mbedtls ncurses numactl openblas openmpi

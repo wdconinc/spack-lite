@@ -238,6 +238,11 @@ while idx < len(text):
         idx += 1
     if idx >= len(text):
         break
+    # Skip non-JSON lines (e.g. spack status messages like "==> Starting concretization")
+    if text[idx] not in "{[":
+        nl = text.find("\n", idx)
+        idx = nl + 1 if nl >= 0 else len(text)
+        continue
     doc, idx = decoder.raw_decode(text, idx)
     for node in doc.get("spec", {}).get("nodes", []):
         name = node.get("name")

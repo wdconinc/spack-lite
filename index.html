@@ -370,7 +370,6 @@ function sendInterrupt() {
   } else {
     // SharedArrayBuffer unavailable — terminate the worker and reload.
     // This is a last-resort fallback for environments that cannot set COOP/COEP.
-    term.write('\r\n\x1b[33m[spack-lite] SharedArrayBuffer unavailable — reloading page to cancel.\x1b[0m\r\n');
     setTimeout(() => location.reload(), 1500);
   }
 }

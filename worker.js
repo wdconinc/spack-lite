@@ -144,6 +144,13 @@ concretizer:
   # (2025+) requires libc information for compiler packages when reusing;
   # the fake gcc stub cannot provide that, causing concretization failures.
   reuse: false
+  # The concretization cache is pre-populated at build time by
+  # scripts/presolve_packages.py.  A cache hit skips the clingo
+  # load/ground/solve phases for seed packages, significantly reducing
+  # solve time in the browser WASM environment.
+  concretization_cache:
+    enable: true
+    url: $spack/var/spack/concretization_cache
 `;
 
 // ---------------------------------------------------------------------------

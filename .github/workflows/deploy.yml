@@ -39,6 +39,9 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Install Python build dependencies
+        run: pip install clingo
+
       - name: Build spack-lite.tar.gz
         env:
           # Use the Spack develop branch

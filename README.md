@@ -246,7 +246,9 @@ The shim is intentionally loaded **before** any Spack import.  It patches:
 
 ### Adjusting the package set
 
-Edit the `KEEP_PKGS` array in `scripts/make_spack_lite.sh` and re-run the script.
+Edit the `KEEP_PKGS` seed array in `scripts/make_spack_lite.sh` and re-run the
+script. The build script expands this seed list to a stable transitive package
+set before creating `spack-lite.tar.gz`.
 
 ### Changing the Spack version
 

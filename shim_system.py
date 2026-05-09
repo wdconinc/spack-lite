@@ -1165,7 +1165,7 @@ except ImportError:
     _cf = None
 
 
-def _threads_startable():
+def _can_start_threads():
     if _threading is None:
         return False
     _marker = []
@@ -1182,15 +1182,15 @@ def _threads_startable():
         return False
 
 
-if _cf is not None and not _threads_startable():
+if _cf is not None and not _can_start_threads():
     class _SerialProcessPoolExecutor:
         """Minimal ProcessPoolExecutor-compatible serial fallback."""
 
         def __init__(self, max_workers=None, *args, **kwargs):
             self._shutdown = False
-            self._max_workers = max_workers
+            # max_workers is accepted for API compatibility.
 
-        def submit(self, fn, /, *args, **kwargs):
+        def submit(self, fn, *args, **kwargs):
             f = _cf.Future()
             if self._shutdown:
                 f.set_exception(
@@ -1199,19 +1199,24 @@ if _cf is not None and not _threads_startable():
                 return f
             try:
                 f.set_result(fn(*args, **kwargs))
-            except BaseException as exc:
+            except Exception as exc:
                 f.set_exception(exc)
             return f
 
         def map(self, fn, *iterables, timeout=None, chunksize=1):
             if self._shutdown:
                 raise RuntimeError("cannot schedule new futures after shutdown")
-            del timeout, chunksize  # unused in serial mode
+            if timeout is not None:
+                raise NotImplementedError(
+                    "timeout is not supported by serial ProcessPoolExecutor fallback"
+                )
+            # chunksize is accepted for API compatibility and has no effect here.
             for items in zip(*iterables):
                 yield fn(*items)
 
         def shutdown(self, wait=True, cancel_futures=False):
-            del wait, cancel_futures
+            # wait/cancel_futures are accepted for API compatibility. Serial
+            # mode resolves submit() immediately, so there are no pending tasks.
             self._shutdown = True
 
         def __enter__(self):

@@ -433,7 +433,7 @@ class TestOsPipeShim:
 # ProcessPoolExecutor thread-constructor fallback tests (section 16)
 # ---------------------------------------------------------------------------
 
-_PREAMBLE_THREADFAIL = f"""\
+_PREAMBLE_THREAD_STARTUP_FAILURE = f"""\
 import sys, os, builtins, threading
 
 _real_import = builtins.__import__
@@ -452,7 +452,6 @@ for _key in list(sys.modules.keys()):
         del sys.modules[_key]
 
 # Simulate musl/Emscripten where ENOSYS == 52 for os.pipe()
-_real_pipe = os.pipe
 def _fake_pipe():
     raise OSError(52, "Function not implemented")
 os.pipe = _fake_pipe
@@ -469,7 +468,7 @@ exec(compile(open({_SHIM_PATH!r}).read(), {_SHIM_PATH!r}, "exec"))
 
 def _run_threadfail_shim_script(code: str, *, timeout: int = 30) -> subprocess.CompletedProcess:
     """Run *code* where os.pipe and thread startup are both unavailable."""
-    script = _PREAMBLE_THREADFAIL + code
+    script = _PREAMBLE_THREAD_STARTUP_FAILURE + code
     return subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
@@ -490,7 +489,7 @@ class TestProcessPoolThreadFailureFallback:
         assert r.returncode == 0, r.stderr
         assert r.stdout.strip() == "_SerialProcessPoolExecutor"
 
-    def test_process_pool_executor_submit_works_serially(self):
+    def test_serial_executor_submit_returns_resolved_future(self):
         """submit() should execute work and return a resolved Future."""
         r = _run_threadfail_shim_script(
             "import concurrent.futures\n"

@@ -60,6 +60,7 @@ For local testing outside Pyodide (standard CPython):
 import builtins
 import sys
 import os
+import errno
 import platform
 import collections
 import json as _json
@@ -1203,7 +1204,32 @@ def _is_pyodide():
         return False
 
 
-if _cf is not None and (not _can_start_threads() or _is_pyodide()):
+if _cf is not None:
+    _REAL_PROCESS_POOL_EXECUTOR = _cf.ProcessPoolExecutor
+    _FORCE_SERIAL_PROCESS_POOL = (not _can_start_threads()) or _is_pyodide()
+    _FALLBACK_OSERROR_ERRNOS = {
+        errno.EAGAIN,
+        errno.ENOSYS,
+    }
+
+    def _should_fallback_process_pool(exc):
+        """Return True for known thread/process-startup failures in constrained runtimes."""
+        # EAGAIN/EWOULDBLOCK (resource exhaustion) and ENOSYS.
+        if isinstance(exc, OSError) and getattr(exc, "errno", None) in _FALLBACK_OSERROR_ERRNOS:
+            return True
+        if isinstance(exc, (RuntimeError, OSError)):
+            _msg = str(exc).lower()
+            return any(
+                token in _msg
+                for token in (
+                    "thread constructor failed",
+                    "resource temporarily unavailable",
+                    "can't start new thread",
+                    "cannot start new thread",
+                )
+            )
+        return False
+
     class _SerialProcessPoolExecutor:
         """Minimal ProcessPoolExecutor-compatible serial fallback."""
 
@@ -1247,4 +1273,86 @@ if _cf is not None and (not _can_start_threads() or _is_pyodide()):
             self.shutdown(wait=True)
             return False
 
-    _cf.ProcessPoolExecutor = _SerialProcessPoolExecutor
+    class _ResilientProcessPoolExecutor:
+        """ProcessPoolExecutor wrapper that transparently degrades to serial mode."""
+
+        def __init__(self, max_workers=None, *args, **kwargs):
+            self._serial = None
+            self._delegate = None
+            if _FORCE_SERIAL_PROCESS_POOL:
+                self._serial = _SerialProcessPoolExecutor(max_workers, *args, **kwargs)
+                return
+            try:
+                self._delegate = _REAL_PROCESS_POOL_EXECUTOR(max_workers, *args, **kwargs)
+            except Exception as exc:
+                if not _should_fallback_process_pool(exc):
+                    raise
+                self._serial = _SerialProcessPoolExecutor(max_workers, *args, **kwargs)
+
+        def _switch_to_serial(self):
+            if self._serial is not None:
+                return
+            if self._delegate is not None:
+                try:
+                    try:
+                        self._delegate.shutdown(wait=False, cancel_futures=True)
+                    except TypeError:
+                        # Older Python runtimes may not accept cancel_futures.
+                        self._delegate.shutdown(wait=False)
+                except (RuntimeError, OSError, ValueError):
+                    pass
+            self._delegate = None
+            self._serial = _SerialProcessPoolExecutor()
+
+        def submit(self, fn, *args, **kwargs):
+            if self._serial is not None:
+                return self._serial.submit(fn, *args, **kwargs)
+            try:
+                return self._delegate.submit(fn, *args, **kwargs)
+            except Exception as exc:
+                if not _should_fallback_process_pool(exc):
+                    raise
+                self._switch_to_serial()
+                return self._serial.submit(fn, *args, **kwargs)
+
+        def map(self, fn, *iterables, timeout=None, chunksize=1):
+            if self._serial is not None:
+                return self._serial.map(
+                    fn, *iterables, timeout=timeout, chunksize=chunksize
+                )
+            try:
+                return self._delegate.map(
+                    fn, *iterables, timeout=timeout, chunksize=chunksize
+                )
+            except Exception as exc:
+                if not _should_fallback_process_pool(exc):
+                    raise
+                self._switch_to_serial()
+                return self._serial.map(
+                    fn, *iterables, timeout=timeout, chunksize=chunksize
+                )
+
+        def shutdown(self, wait=True, cancel_futures=False):
+            if self._serial is not None:
+                self._serial.shutdown(wait=wait, cancel_futures=cancel_futures)
+                return
+            if self._delegate is not None:
+                try:
+                    self._delegate.shutdown(
+                        wait=wait, cancel_futures=cancel_futures
+                    )
+                except TypeError:
+                    # Older Python runtimes may not accept cancel_futures.
+                    self._delegate.shutdown(wait=wait)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            self.shutdown(wait=True)
+            return False
+
+    if _FORCE_SERIAL_PROCESS_POOL:
+        _cf.ProcessPoolExecutor = _SerialProcessPoolExecutor
+    else:
+        _cf.ProcessPoolExecutor = _ResilientProcessPoolExecutor

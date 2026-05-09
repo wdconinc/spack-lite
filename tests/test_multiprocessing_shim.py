@@ -502,6 +502,80 @@ class TestProcessPoolThreadFailureFallback:
 
 
 # ---------------------------------------------------------------------------
+# ProcessPoolExecutor runtime thread-constructor fallback tests (section 16, case c)
+# ---------------------------------------------------------------------------
+
+_PREAMBLE_THREAD_STARTUP_FAILURE_AT_SUBMIT = f"""\
+exec(compile(open({_SHIM_PATH!r}).read(), {_SHIM_PATH!r}, "exec"))
+"""
+
+
+def _run_threadfail_submit_shim_script(
+    code: str, *, timeout: int = 30
+) -> subprocess.CompletedProcess:
+    """Run *code* where thread startup fails at ProcessPoolExecutor.submit()."""
+    script = _PREAMBLE_THREAD_STARTUP_FAILURE_AT_SUBMIT + code
+    return subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+class TestProcessPoolRuntimeThreadFailureFallback:
+    """Section 16 case (c): fallback when submit() hits thread startup errors."""
+
+    def test_submit_falls_back_when_thread_creation_fails_at_runtime(self):
+        """submit() should still succeed via serial fallback."""
+        r = _run_threadfail_submit_shim_script(
+            "import concurrent.futures\n"
+            "import concurrent.futures.process as _cfp\n"
+            "_real_submit = _cfp.ProcessPoolExecutor.submit\n"
+            "def _fail_submit(self, *args, **kwargs):\n"
+            "    raise RuntimeError('thread constructor failed: Resource temporarily unavailable')\n"
+            "_cfp.ProcessPoolExecutor.submit = _fail_submit\n"
+            "with concurrent.futures.ProcessPoolExecutor(1) as ex:\n"
+            "    fut = ex.submit(pow, 2, 8)\n"
+            "    print(fut.result())\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "256"
+
+    def test_submit_falls_back_on_oserror_eagain(self):
+        """submit() should fall back when delegate submit raises OSError(EAGAIN)."""
+        r = _run_threadfail_submit_shim_script(
+            "import concurrent.futures\n"
+            "import concurrent.futures.process as _cfp\n"
+            "import errno\n"
+            "def _fail_submit(self, *args, **kwargs):\n"
+            "    raise OSError(errno.EAGAIN, 'Resource temporarily unavailable')\n"
+            "_cfp.ProcessPoolExecutor.submit = _fail_submit\n"
+            "with concurrent.futures.ProcessPoolExecutor(1) as ex:\n"
+            "    fut = ex.submit(pow, 2, 8)\n"
+            "    print(fut.result())\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "256"
+
+    def test_submit_falls_back_on_oserror_enosys(self):
+        """submit() should fall back when delegate submit raises OSError(ENOSYS)."""
+        r = _run_threadfail_submit_shim_script(
+            "import concurrent.futures\n"
+            "import concurrent.futures.process as _cfp\n"
+            "import errno\n"
+            "def _fail_submit(self, *args, **kwargs):\n"
+            "    raise OSError(errno.ENOSYS, 'Function not implemented')\n"
+            "_cfp.ProcessPoolExecutor.submit = _fail_submit\n"
+            "with concurrent.futures.ProcessPoolExecutor(1) as ex:\n"
+            "    fut = ex.submit(pow, 2, 8)\n"
+            "    print(fut.result())\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "256"
+
+
+# ---------------------------------------------------------------------------
 # ProcessPoolExecutor Pyodide-environment fallback tests (section 16, case b)
 #
 # Scenario: the `js` module (Pyodide's JS bridge) is importable, signalling

@@ -357,6 +357,11 @@ if (typeof SharedArrayBuffer !== 'undefined') {
   worker.postMessage({ type: 'set-interrupt-buffer', buffer: interruptBuffer });
 }
 
+/** Reset the interrupt buffer to 0 so the next command starts clean. */
+function resetInterruptBuffer() {
+  if (interruptBuffer) Atomics.store(interruptBuffer, 0, 0);
+}
+
 /** Raise KeyboardInterrupt in the running Python command, if possible. */
 function sendInterrupt() {
   if (interruptBuffer) {
@@ -407,7 +412,7 @@ worker.onmessage = ({ data }) => {
 function runCommand(cmdStr) {
   // Clear any leftover interrupt signal before starting a new command so that
   // a previous Ctrl+C does not immediately cancel the next command.
-  if (interruptBuffer) Atomics.store(interruptBuffer, 0, 0);
+  resetInterruptBuffer();
   return new Promise((resolve, reject) => {
     pendingResolve = resolve;
     pendingReject  = reject;
@@ -484,7 +489,7 @@ async function startREPL() {
     }
     hideCancelBtn();
     // Reset the interrupt buffer so the next command starts clean.
-    if (interruptBuffer) Atomics.store(interruptBuffer, 0, 0);
+    resetInterruptBuffer();
     enableInput();
   }
 }

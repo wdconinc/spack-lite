@@ -630,8 +630,10 @@ def _cmd_spack(args, stdin):
             _spack_main.main(args)
         except KeyboardInterrupt:
             import traceback as _tb
-            buf.write('\nKeyboardInterrupt\n')
-            buf.write(_tb.format_exc())
+            # Show where the code was interrupted so the user can see which
+            # part of the solver or package loading was hanging.
+            buf.write('\nKeyboardInterrupt\nBacktrace (interrupted at):\n')
+            buf.write(''.join(_tb.format_stack()))
         finally:
             # spack.main.main() applies debug/backtrace/gc settings but never
             # restores them.  Reset here so they don't bleed into subsequent

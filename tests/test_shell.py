@@ -246,8 +246,8 @@ class TestEnv:
         assert "=" in r.stdout
         # The shim sets these defaults
         assert any(line.startswith("HOME=") for line in r.stdout.splitlines())
-        assert "EDITOR=vi" in r.stdout
-        assert "VISUAL=vi" in r.stdout
+        assert "EDITOR=nano" in r.stdout
+        assert "VISUAL=nano" in r.stdout
 
 
 class TestWhich:
@@ -263,9 +263,10 @@ class TestWhich:
         assert "not found" in r.stdout
 
     def test_editor_available(self):
-        r = run_in_shell("which vi")
+        r = run_in_shell("which nano")
         assert r.returncode == 0
-        assert "/usr/bin/vi" in r.stdout
+        assert "nano" in r.stdout
+        assert "not found" not in r.stdout
 
 
 class TestFind:

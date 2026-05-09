@@ -14,7 +14,7 @@ The JSON object contains:
 Supported built-ins
 -------------------
   echo, pwd, cd, ls, cat, head, tail, grep,
-  mkdir, rm, cp, mv, env, which, find, spack
+  mkdir, rm, cp, mv, env, which, find, nano, spack
 
 Variable assignment
 -------------------
@@ -684,6 +684,19 @@ def _cmd_spack(args, stdin):
 # Dispatch table
 # ---------------------------------------------------------------------------
 
+def _cmd_nano(args, stdin):
+    """Stub editor — interactive editing is not available in browser mode."""
+    target = args[0] if args else ''
+    msg = (
+        "nano: interactive editing is not available in browser mode.\n"
+        "To view spack configuration use:  spack config get <section>\n"
+        "To change a value use:            spack config add <key:value>\n"
+    )
+    if target:
+        msg = f"nano: {target}: " + msg[6:]
+    return msg
+
+
 _BUILTINS = {
     'echo':  _cmd_echo,
     'pwd':   _cmd_pwd,
@@ -700,6 +713,7 @@ _BUILTINS = {
     'env':   _cmd_env,
     'which': _cmd_which,
     'find':  _cmd_find,
+    'nano':  _cmd_nano,
     'spack': _cmd_spack,
 }
 

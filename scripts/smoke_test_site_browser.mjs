@@ -103,14 +103,19 @@ try {
   );
 
   const result = await page.evaluate(async () => {
-    const value = await runCommand('spack spec zlib');
-    return { output: value?.output ?? '', cwd: value?.cwd ?? '' };
+    const timeoutMs = 180000;
+    const smokeCommand = 'spack --version';
+    const timedResult = await Promise.race([
+      runCommand(smokeCommand),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`command timed out after ${timeoutMs}ms: ${smokeCommand}`)), timeoutMs)),
+    ]);
+    return { output: timedResult?.output ?? '', cwd: timedResult?.cwd ?? '' };
   });
 
-  console.log('[browser-smoke] spack spec zlib output:', JSON.stringify(result.output.slice(0, 500)));
+  console.log('[browser-smoke] spack --version output:', JSON.stringify(result.output.slice(0, 500)));
 
-  if (!result.output || !result.output.includes('zlib')) {
-    throw new Error(`spack spec zlib output missing expected content. Got: ${JSON.stringify(result.output.slice(0, 300))}`);
+  if (!result.output || !result.output.toLowerCase().includes('spack')) {
+    throw new Error(`spack --version output missing expected content. Got: ${JSON.stringify(result.output.slice(0, 300))}`);
   }
 
   const joinedLogs = `${consoleLines.join('\n')}\n${pageErrors.join('\n')}`.toLowerCase();

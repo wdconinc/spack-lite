@@ -328,6 +328,33 @@ class TestSpackSpec:
         assert "[Errno 52]" not in r.stdout
         assert "[Errno 52]" not in r.stderr
 
+    def test_spack_spec_zlib_twice_no_oom(self, spack_root):
+        """Running ``spack spec zlib`` twice must succeed both times.
+
+        Regression for the OOM bug: Spack module-level caches and un-collected
+        circular garbage from the first run must not cause the second run to
+        exhaust memory or raise an error.  The gc.collect() + cache-reset in
+        _cmd_spack's finally-block is what makes this reliable.
+        """
+        for i in range(2):
+            r = run_in_shell("spack spec zlib", timeout=120)
+            assert r.returncode == 0, (
+                f"spack spec zlib failed on invocation {i + 1}.\n"
+                f"stdout: {r.stdout}\n"
+                f"stderr: {r.stderr}"
+            )
+            assert "zlib" in r.stdout, f"Expected 'zlib' in spec output (invocation {i + 1})"
+            assert "Error" not in r.stdout or "zlib" in r.stdout, (
+                f"Unexpected error in output (invocation {i + 1}): {r.stdout}"
+            )
+
+    def test_spack_load_packages_not_available_outside_browser(self, spack_root):
+        """``spack load-packages`` outside the browser should show a graceful message."""
+        r = run_in_shell("spack load-packages", timeout=30)
+        assert r.returncode == 0
+        # Outside the browser js module is absent, so we expect the fallback message.
+        assert "not available" in r.stdout or "Loading" in r.stdout
+
 
 class TestSpackPython:
     """Tests for 'spack python' interactive-mode detection in _cmd_spack."""

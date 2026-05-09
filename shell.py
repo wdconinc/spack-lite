@@ -559,6 +559,25 @@ def _cmd_spack(args, stdin):
             "Example: spack python -c \"import spack; print(spack.spack_version)\"\n"
         )
 
+    # 'spack load-packages' triggers the on-demand fetch of spack-packages.tar.gz
+    # which contains the full package universe.  The full set is NOT loaded
+    # automatically to prevent memory exhaustion during `spack spec`.
+    if args[0] == 'load-packages':
+        try:
+            import js as _js
+            if hasattr(_js, 'loadPackages'):
+                _js.loadPackages()
+                return (
+                    "Loading full package set in background…\n"
+                    "All Spack packages will be available shortly.\n"
+                )
+        except Exception:
+            pass
+        return (
+            "spack load-packages: not available in this environment.\n"
+            "(Requires the browser Pyodide context with spack-packages.tar.gz.)\n"
+        )
+
     buf = _ShellBuffer()
     old_stdout = sys.stdout
     old_stderr = sys.stderr
@@ -584,6 +603,25 @@ def _cmd_spack(args, stdin):
         sys.stdout = old_stdout
         sys.stderr = old_stderr
         sys.stdin = old_stdin
+        # Force a GC cycle to reclaim circular garbage from Spack's object
+        # graph (Spec → Package → Dependency → Spec …) before the next
+        # command runs.  In the Emscripten/WASM environment the heap can
+        # only grow, so proactively freeing cycles reduces peak memory.
+        import gc
+        gc.collect()
+        # Reset Spack's module-level caches so that package metadata loaded
+        # for this command does not stay pinned for subsequent commands.
+        try:
+            import spack.config as _spack_cfg
+            _spack_cfg.clear_caches()
+        except Exception:
+            pass
+        try:
+            import spack.repo as _spack_repo
+            if hasattr(_spack_repo, 'path') and hasattr(_spack_repo.path, 'clear_caches'):
+                _spack_repo.path.clear_caches()
+        except Exception:
+            pass
     return buf.getvalue()
 
 

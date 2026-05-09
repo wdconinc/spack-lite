@@ -195,15 +195,19 @@ function _copyTree(srcFS, srcPath, dstFS, dstPath) {
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch spack-packages.tar.gz and unpack it into Pyodide's MEMFS in the
- * background so the full Spack package set becomes available without
- * blocking the initial page load.
+ * Fetch spack-packages.tar.gz and unpack it into Pyodide's MEMFS so the full
+ * Spack package set becomes available.
+ *
+ * NOT called automatically on startup to avoid memory pressure during
+ * concretization.  Triggered on demand via `spack load-packages` in the shell
+ * (which calls the exposed `self.loadPackages` JS hook) or via a
+ * { type: 'load-packages' } worker message.
  *
  * The archive must have the same structure as spack-lite.tar.gz
  * (top-level directory "spack/") so it can be extracted with
  * extractDir: '/home/pyodide' and merge into the existing tree.
  *
- * Runs fire-and-forget from init(); errors are logged but never re-thrown.
+ * Errors are logged but never re-thrown.
  */
 async function loadPackagesBackground() {
   try {
@@ -221,13 +225,17 @@ async function loadPackagesBackground() {
       return;
     }
     setStatus('packages-loading', 'Loading packages\u2026');
-    const buffer = await response.arrayBuffer();
+    let buffer = await response.arrayBuffer();
     // Defer the (synchronous) unpack until no Python command is running so
     // we do not modify the filesystem while Python is mid-execution.
     while (_commandStdoutCaptureChunks !== null) {
       await new Promise(r => setTimeout(r, 50));
     }
     pyodide.unpackArchive(buffer, 'gztar', { extractDir: '/home/pyodide' });
+    // Release the compressed ArrayBuffer immediately after extraction so that
+    // the JS heap does not hold both the archive and subsequent spack spec
+    // working sets simultaneously.
+    buffer = null;
     setStatus('ready', 'Ready');
     post('stdout', { text: '\n\x1b[2m[spack-lite] Full package set loaded.\x1b[0m\n' });
   } catch (err) {
@@ -236,6 +244,12 @@ async function loadPackagesBackground() {
     setStatus('ready', 'Ready');
   }
 }
+
+/**
+ * Public hook callable from Python via `js.loadPackages()`.
+ * Fires loadPackagesBackground() without blocking the caller.
+ */
+self.loadPackages = () => loadPackagesBackground();
 
 // ---------------------------------------------------------------------------
 // Main initialisation
@@ -460,11 +474,9 @@ for path, content in cfg_files.items():
     // 10. Done
     setStatus('ready', 'Ready');
 
-    // 11. Lazily load the full package set in the background.
-    //     Intentionally not awaited — the REPL is immediately usable, and
-    //     the seed packages in spack-lite.tar.gz remain available while the
-    //     full archive downloads.
-    loadPackagesBackground();
+    // Note: spack-packages.tar.gz (full package set) is NOT loaded
+    // automatically to prevent memory exhaustion during `spack spec`.
+    // Users can load it on demand with:  spack load-packages
 
   } catch (err) {
     console.error('Pyodide init failed:', err);
@@ -495,6 +507,10 @@ async function runShellCommand(cmdStr) {
 // Message handler
 // ---------------------------------------------------------------------------
 self.onmessage = async ({ data }) => {
+  if (data.type === 'load-packages') {
+    loadPackagesBackground();
+    return;
+  }
   if (data.type !== 'run') return;
 
   if (!pyodide) {

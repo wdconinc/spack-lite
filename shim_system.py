@@ -126,11 +126,17 @@ platform.uname = lambda: _UnameTuple(
 #     canned mock responses sufficient for spack's probing / version checks.
 # ---------------------------------------------------------------------------
 import subprocess  # noqa: E402 — must come after platform patching
-from unittest.mock import MagicMock  # noqa: E402
+import types as _types  # noqa: E402
 
 
 def _build_mock_result(args=None, **kwargs):
-    """Return a Mock CompletedProcess-like object with sensible stdout."""
+    """Return a lightweight CompletedProcess-like object with sensible stdout.
+
+    Uses types.SimpleNamespace instead of MagicMock to avoid the unbounded
+    call-recording overhead that MagicMock accumulates on every attribute
+    access.  Spack caches subprocess results (e.g. compiler version strings)
+    so keeping each result object small prevents monotonic memory growth.
+    """
     cmd = " ".join(map(str, args)) if isinstance(args, (list, tuple)) else str(args or "")
 
     stdout = b""
@@ -220,12 +226,12 @@ def _build_mock_result(args=None, **kwargs):
     elif "cmake" in cmd:
         stdout = b"cmake version 3.22.1\n"
 
-    result = MagicMock()
-    result.stdout = stdout
-    result.stderr = stderr
-    result.returncode = exit_code
-    result.args = args
-    return result
+    return _types.SimpleNamespace(
+        stdout=stdout,
+        stderr=stderr,
+        returncode=exit_code,
+        args=args,
+    )
 
 
 class _MockPopen:

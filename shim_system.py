@@ -1217,16 +1217,18 @@ if _cf is not None:
         # EAGAIN/EWOULDBLOCK (resource exhaustion) and ENOSYS.
         if isinstance(exc, OSError) and getattr(exc, "errno", None) in _FALLBACK_OSERROR_ERRNOS:
             return True
-        _msg = str(exc).lower()
-        return any(
-            token in _msg
-            for token in (
-                "thread constructor failed",
-                "resource temporarily unavailable",
-                "can't start new thread",
-                "cannot start new thread",
+        if isinstance(exc, (RuntimeError, OSError)):
+            _msg = str(exc).lower()
+            return any(
+                token in _msg
+                for token in (
+                    "thread constructor failed",
+                    "resource temporarily unavailable",
+                    "can't start new thread",
+                    "cannot start new thread",
+                )
             )
-        )
+        return False
 
     class _SerialProcessPoolExecutor:
         """Minimal ProcessPoolExecutor-compatible serial fallback."""
@@ -1290,15 +1292,15 @@ if _cf is not None:
         def _switch_to_serial(self):
             if self._serial is not None:
                 return
-            try:
-                if self._delegate is not None:
+            if self._delegate is not None:
+                try:
                     try:
                         self._delegate.shutdown(wait=False, cancel_futures=True)
                     except TypeError:
                         # Older Python runtimes may not accept cancel_futures.
                         self._delegate.shutdown(wait=False)
-            except Exception:
-                pass
+                except (RuntimeError, OSError, ValueError):
+                    pass
             self._delegate = None
             self._serial = _SerialProcessPoolExecutor()
 

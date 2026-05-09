@@ -542,6 +542,38 @@ class TestProcessPoolRuntimeThreadFailureFallback:
         assert r.returncode == 0, r.stderr
         assert r.stdout.strip() == "256"
 
+    def test_submit_falls_back_on_oserror_eagain(self):
+        """submit() should fall back when delegate submit raises OSError(EAGAIN)."""
+        r = _run_threadfail_submit_shim_script(
+            "import concurrent.futures\n"
+            "import concurrent.futures.process as _cfp\n"
+            "import errno\n"
+            "def _fail_submit(self, *args, **kwargs):\n"
+            "    raise OSError(errno.EAGAIN, 'Resource temporarily unavailable')\n"
+            "_cfp.ProcessPoolExecutor.submit = _fail_submit\n"
+            "with concurrent.futures.ProcessPoolExecutor(1) as ex:\n"
+            "    fut = ex.submit(pow, 2, 8)\n"
+            "    print(fut.result())\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "256"
+
+    def test_submit_falls_back_on_oserror_enosys(self):
+        """submit() should fall back when delegate submit raises OSError(ENOSYS)."""
+        r = _run_threadfail_submit_shim_script(
+            "import concurrent.futures\n"
+            "import concurrent.futures.process as _cfp\n"
+            "import errno\n"
+            "def _fail_submit(self, *args, **kwargs):\n"
+            "    raise OSError(errno.ENOSYS, 'Function not implemented')\n"
+            "_cfp.ProcessPoolExecutor.submit = _fail_submit\n"
+            "with concurrent.futures.ProcessPoolExecutor(1) as ex:\n"
+            "    fut = ex.submit(pow, 2, 8)\n"
+            "    print(fut.result())\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "256"
+
 
 # ---------------------------------------------------------------------------
 # ProcessPoolExecutor Pyodide-environment fallback tests (section 16, case b)

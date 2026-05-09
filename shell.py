@@ -539,7 +539,7 @@ def _spack_python_is_interactive(rest):
 def _cmd_spack(args, stdin):
     """Route spack sub-commands through the Spack Python API."""
     try:
-        from spack.main import SpackCommand, SpackCommandError
+        import spack.main  # noqa: F401 — verify spack is importable
     except ImportError:
         return (
             "spack: not available — build spack-lite.tar.gz with\n"
@@ -549,10 +549,26 @@ def _cmd_spack(args, stdin):
     if not args:
         return "Usage: spack <command> [options]\nTry 'spack help' for available commands.\n"
 
+    # Find the actual subcommand — the first non-flag token in args.
+    # Global flags like --debug/-d/-t/--backtrace may precede the subcommand.
+    # Flags that consume the next token as a value are skipped with their arg.
+    _VALUE_FLAGS = {'-c', '--config', '-C', '--config-scope',
+                    '-e', '--env', '-D', '--env-dir', '--color'}
+    _subcmd = None
+    _i = 0
+    while _i < len(args):
+        _a = args[_i]
+        if not _a.startswith('-'):
+            _subcmd = _a
+            break
+        _i += 2 if _a in _VALUE_FLAGS else 1
+    if _subcmd is None:
+        return "Usage: spack <command> [options]\nTry 'spack help' for available commands.\n"
+
     # Interactive 'spack python' is not supported in the browser: Pyodide's
     # stdin fd does not support seek, so code.interact() raises ESPIPE.
     # Detect this case early and return a helpful message.
-    if args[0] == 'python' and _spack_python_is_interactive(args[1:]):
+    if _subcmd == 'python' and _spack_python_is_interactive(args[_i + 1:]):
         return (
             "Interactive Python is not supported in browser mode.\n"
             "Use 'spack python -c \"<code>\"' to run Python code.\n"
@@ -562,7 +578,7 @@ def _cmd_spack(args, stdin):
     # 'spack load-packages' triggers the on-demand fetch of spack-packages.tar.gz
     # which contains the full package universe.  The full set is NOT loaded
     # automatically to prevent memory exhaustion during `spack spec`.
-    if args[0] == 'load-packages':
+    if _subcmd == 'load-packages':
         try:
             import js as _js
             if hasattr(_js, 'loadPackages'):
@@ -590,15 +606,32 @@ def _cmd_spack(args, stdin):
         # the piped input rather than the raw C-level fd, which in Pyodide
         # does not support seek and raises OSError(ESPIPE).
         sys.stdin = io.StringIO(stdin or '')
+        # Use spack.main.main() — Spack's own CLI entry point — rather than
+        # SpackCommand so that global flags (--debug, --backtrace, --verbose,
+        # -c KEY=VAL, …) are parsed and applied automatically.
+        import gc as _gc
+        import spack.main as _spack_main
+        _orig_gc = _gc.get_threshold()
         try:
-            cmd = SpackCommand(args[0])
-            cmd(*args[1:])
-        except SystemExit:
-            pass
-        except SpackCommandError as exc:
-            buf.write(f'\nError: {exc}\n')
-        except Exception as exc:  # broad catch: SpackCommand can raise many internal errors
-            buf.write(f'\nError: {exc}\n')
+            _spack_main.main(args)
+        finally:
+            # spack.main.main() applies debug/backtrace/gc settings but never
+            # restores them.  Reset here so they don't bleed into subsequent
+            # commands.
+            _gc.set_threshold(*_orig_gc)
+            try:
+                import llnl.util.tty as _tty
+                _tty.set_debug(0)
+                _tty.set_verbose(False)
+                _tty.set_stacktrace(False)
+            except Exception:
+                pass
+            try:
+                import spack.error as _spack_err
+                _spack_err.debug = False
+                _spack_err.SHOW_BACKTRACE = False
+            except Exception:
+                pass
     finally:
         sys.stdout = old_stdout
         sys.stderr = old_stderr

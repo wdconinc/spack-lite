@@ -361,6 +361,58 @@ class TestSpackSpec:
         # Outside the browser js module is absent, so we expect the fallback message.
         assert "not available" in r.stdout or "Loading" in r.stdout
 
+    def test_spack_debug_flag_produces_debug_output(self, spack_root):
+        """``spack --debug spec zlib`` must be accepted and produce debug output.
+
+        Regression for RC-A (args[0]='--debug' was passed as subcommand name)
+        and RC-B (global flags were never forwarded to setup_main_options).
+        """
+        r = run_in_shell("spack --debug spec zlib", timeout=120)
+        assert r.returncode == 0, (
+            "spack --debug spec zlib failed.\n"
+            f"stdout: {r.stdout}\n"
+            f"stderr: {r.stderr}"
+        )
+        assert "unknown command" not in r.stdout.lower(), (
+            "--debug was treated as a subcommand name instead of a flag"
+        )
+        assert "zlib" in r.stdout, "Expected concrete spec output to contain 'zlib'"
+
+    def test_spack_backtrace_flag_is_accepted(self, spack_root):
+        """``spack --backtrace spec zlib`` must be accepted without error.
+
+        Regression for RC-A: '--backtrace' must not be treated as a subcommand.
+        """
+        r = run_in_shell("spack --backtrace spec zlib", timeout=120)
+        assert r.returncode == 0, (
+            "spack --backtrace spec zlib failed.\n"
+            f"stdout: {r.stdout}\n"
+            f"stderr: {r.stderr}"
+        )
+        assert "unknown command" not in r.stdout.lower(), (
+            "--backtrace was treated as a subcommand name instead of a flag"
+        )
+        assert "zlib" in r.stdout, "Expected concrete spec output to contain 'zlib'"
+
+    def test_spack_debug_flags_do_not_bleed_across_commands(self, spack_root):
+        """Debug mode from one command must not persist to the next.
+
+        After ``spack --debug spec zlib``, a plain ``spack spec zlib`` must
+        produce normal (non-debug) output and succeed.
+        """
+        # Run with debug first, then without
+        r1 = run_in_shell("spack --debug spec zlib", timeout=120)
+        assert r1.returncode == 0
+
+        r2 = run_in_shell("spack spec zlib", timeout=120)
+        assert r2.returncode == 0, (
+            "spack spec zlib failed after a prior --debug invocation "
+            "(debug state may have bled across commands).\n"
+            f"stdout: {r2.stdout}\n"
+            f"stderr: {r2.stderr}"
+        )
+        assert "zlib" in r2.stdout
+
 
 class TestSpackPython:
     """Tests for 'spack python' interactive-mode detection in _cmd_spack."""

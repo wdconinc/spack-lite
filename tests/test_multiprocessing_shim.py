@@ -428,3 +428,74 @@ class TestOsPipeShim:
         assert r.returncode == 0, r.stderr
         assert r.stdout.strip() == "True"
 
+
+# ---------------------------------------------------------------------------
+# ProcessPoolExecutor thread-constructor fallback tests (section 16)
+# ---------------------------------------------------------------------------
+
+_PREAMBLE_THREAD_STARTUP_FAILURE = f"""\
+import sys, os, builtins, threading
+
+_real_import = builtins.__import__
+
+_BLOCKED = {{'_multiprocessing', '_posixshmem'}}
+
+def _blocking_import(name, *args, **kwargs):
+    if name in _BLOCKED and name not in sys.modules:
+        raise ImportError("blocked: " + name)
+    return _real_import(name, *args, **kwargs)
+
+builtins.__import__ = _blocking_import
+
+for _key in list(sys.modules.keys()):
+    if 'multiprocessing' in _key or _key in _BLOCKED:
+        del sys.modules[_key]
+
+# Simulate musl/Emscripten where ENOSYS == 52 for os.pipe()
+def _fake_pipe():
+    raise OSError(52, "Function not implemented")
+os.pipe = _fake_pipe
+
+# Simulate runtime thread creation failure in ProcessPoolExecutor setup.
+_real_thread_start = threading.Thread.start
+def _fail_thread_start(self):
+    raise RuntimeError("thread constructor failed: Resource temporarily unavailable")
+threading.Thread.start = _fail_thread_start
+
+exec(compile(open({_SHIM_PATH!r}).read(), {_SHIM_PATH!r}, "exec"))
+"""
+
+
+def _run_threadfail_shim_script(code: str, *, timeout: int = 30) -> subprocess.CompletedProcess:
+    """Run *code* where os.pipe and thread startup are both unavailable."""
+    script = _PREAMBLE_THREAD_STARTUP_FAILURE + code
+    return subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+class TestProcessPoolThreadFailureFallback:
+    """Section 16: ProcessPoolExecutor falls back to a serial executor."""
+
+    def test_process_pool_executor_replaced(self):
+        """ProcessPoolExecutor should be replaced when thread startup fails."""
+        r = _run_threadfail_shim_script(
+            "import concurrent.futures\n"
+            "print(concurrent.futures.ProcessPoolExecutor.__name__)\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "_SerialProcessPoolExecutor"
+
+    def test_serial_executor_submit_returns_resolved_future(self):
+        """submit() should execute work and return a resolved Future."""
+        r = _run_threadfail_shim_script(
+            "import concurrent.futures\n"
+            "with concurrent.futures.ProcessPoolExecutor(1) as ex:\n"
+            "    fut = ex.submit(pow, 2, 8)\n"
+            "    print(fut.result())\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "256"

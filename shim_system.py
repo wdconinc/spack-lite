@@ -24,6 +24,7 @@ Modules patched
 13. _multiprocessing — stub C extension; SemLock backed by threading primitives
 14. _posixshmem     — stub C extension; shm_open/shm_unlink raise OSError(ENOSYS)
 15. ProcessPoolExecutor — _ThreadWakeup patched to avoid os.pipe() (ENOSYS in WASM)
+16. ProcessPoolExecutor — serial fallback when thread startup is unavailable
 
 Git operations
 --------------
@@ -1142,3 +1143,87 @@ except OSError as _pipe_err:
 
         except (ImportError, AttributeError):
             pass
+
+# ---------------------------------------------------------------------------
+# 16.  Patch concurrent.futures.ProcessPoolExecutor when threads are unavailable
+#
+#      In some browser/WASM builds, creating a native thread fails with:
+#          "thread constructor failed: Resource temporarily unavailable"
+#      ProcessPoolExecutor requires an internal manager thread even before any
+#      workers execute user code, so `spack spec zlib` fails at executor
+#      construction time.
+#
+#      Fix: detect thread-start failure once at startup and replace
+#      concurrent.futures.ProcessPoolExecutor with a serial, in-process
+#      executor that preserves the submit/map/shutdown API surface Spack uses.
+# ---------------------------------------------------------------------------
+try:
+    import threading as _threading
+    import concurrent.futures as _cf
+except ImportError:
+    _threading = None
+    _cf = None
+
+
+def _can_start_threads():
+    if _threading is None:
+        return False
+    _marker = []
+
+    def _target():
+        _marker.append(True)
+
+    _t = _threading.Thread(target=_target, daemon=True)
+    try:
+        _t.start()
+        _t.join()
+        return bool(_marker)
+    except Exception:
+        return False
+
+
+if _cf is not None and not _can_start_threads():
+    class _SerialProcessPoolExecutor:
+        """Minimal ProcessPoolExecutor-compatible serial fallback."""
+
+        def __init__(self, max_workers=None, *args, **kwargs):
+            self._shutdown = False
+            # max_workers is accepted for API compatibility.
+
+        def submit(self, fn, *args, **kwargs):
+            f = _cf.Future()
+            if self._shutdown:
+                f.set_exception(
+                    RuntimeError("cannot schedule new futures after shutdown")
+                )
+                return f
+            try:
+                f.set_result(fn(*args, **kwargs))
+            except Exception as exc:
+                f.set_exception(exc)
+            return f
+
+        def map(self, fn, *iterables, timeout=None, chunksize=1):
+            if self._shutdown:
+                raise RuntimeError("cannot schedule new futures after shutdown")
+            if timeout is not None:
+                raise NotImplementedError(
+                    "timeout is not supported by serial ProcessPoolExecutor fallback"
+                )
+            # chunksize is accepted for API compatibility and has no effect here.
+            for items in zip(*iterables):
+                yield fn(*items)
+
+        def shutdown(self, wait=True, cancel_futures=False):
+            # wait/cancel_futures are accepted for API compatibility. Serial
+            # mode resolves submit() immediately, so there are no pending tasks.
+            self._shutdown = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            self.shutdown(wait=True)
+            return False
+
+    _cf.ProcessPoolExecutor = _SerialProcessPoolExecutor

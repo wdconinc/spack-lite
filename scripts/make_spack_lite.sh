@@ -42,7 +42,8 @@
 #   5. Pack the result into a .tar.gz with the top-level directory "spack/".
 #
 # Seed packages in spack-lite.tar.gz (adjust KEEP_PKGS to change the set):
-#   autoconf automake bzip2 cmake curl diffutils expat findutils gcc
+#   autoconf automake bzip2 cmake compiler_wrapper curl diffutils expat
+#   findutils gcc
 #   gcc_runtime gdbm gettext glibc hdf5 hwloc libaio libbsd libffi libiconv
 #   libpciaccess libsigsegv libtool libxml2 lz4 m4 ncurses numactl
 #   openblas openmpi openssl patch perl pkgconf python readline sqlite
@@ -77,7 +78,7 @@ SPACK_LITE_DIR="${WORK_DIR}/spack"
 # UnknownPackageError for 'libc'.
 KEEP_PKGS=(
   autoconf automake bzip2 cmake curl diffutils expat findutils
-  gcc gcc_runtime glibc
+  compiler_wrapper gcc gcc_runtime glibc
   gdbm gettext hdf5 hwloc libaio libbsd libffi libiconv libpciaccess
   libsigsegv libtool libxml2 lz4 m4 ncurses numactl openblas openmpi
   openssl patch perl pkgconf python readline sqlite tar util_linux
@@ -171,7 +172,7 @@ done
 # Packages required for compiler detection / spec concretization in the browser.
 # These MUST be present in the spack-packages source or the build aborts.
 # Note: use underscore-style names (Package API v2 convention).
-REQUIRED_PKGS=(gcc gcc_runtime glibc)
+REQUIRED_PKGS=(compiler_wrapper gcc gcc_runtime glibc)
 
 for pkg in "${KEEP_PKGS[@]}"; do
   src="${ORIG_PKGS_DIR}/${pkg}"

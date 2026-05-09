@@ -48,7 +48,7 @@ Commands can be chained with pipes (`\|`) and support `$VAR` / `${VAR}` expansio
 Browser Tab
 ├── index.html               ← xterm.js UI + message bus
 └── worker.js                ← Web Worker
-    ├── Pyodide 0.27.3       ← WebAssembly Python runtime (Python 3.12)
+    ├── Pyodide 0.29.4       ← WebAssembly Python runtime (Python 3.13)
     │   └── clingo 5.7.1     ← ASP solver, bundled in Pyodide — loaded via loadPackage()
     ├── wasm-git 0.0.14      ← libgit2 compiled to WASM; exposes self.gitCall for git ops
     ├── shim_system.py       ← "System lie": patches subprocess / os / platform
@@ -65,7 +65,7 @@ responses that make Spack believe it is running on a standard **Linux x86_64**
 host with GCC 11 available.
 
 Clingo 5.7.1 (the ASP solver used by `spack spec` and `spack concretize`) is
-bundled directly in Pyodide 0.27.3 and is loaded via `pyodide.loadPackage('clingo')`
+bundled directly in Pyodide 0.29.4 and is loaded via `pyodide.loadPackage('clingo')`
 — no custom WASM build or separate wheel download is required.
 
 The Spack package repository was split into

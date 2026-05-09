@@ -6,13 +6,13 @@
  * classic clingo 5.x Python API works correctly.  This is the API that Spack's
  * solver (spack/solver/asp.py) uses.
  *
- * Pyodide 0.27.3 bundles clingo 5.7.1 as a native loadPackage() target.
+ * Pyodide 0.29.4 bundles clingo 5.7.1 as a native loadPackage() target.
  *
  * Usage (run from the directory where pyodide was installed via npm):
  *   node smoke_test_clingo_pyodide.mjs
  *
  * The script imports 'pyodide' from node_modules/ in the current working
- * directory; run from the directory where `npm install pyodide@0.27.3` was
+ * directory; run from the directory where `npm install pyodide@0.29.4` was
  * executed.
  *
  * Tests performed:
@@ -35,7 +35,7 @@ const pyodide = await loadPyodide();
 console.log(`[smoke-test] Pyodide ${pyodide.version} ready.`);
 
 // ---------------------------------------------------------------------------
-// Load clingo via pyodide.loadPackage() — bundled in Pyodide 0.27.3.
+// Load clingo via pyodide.loadPackage() — bundled in Pyodide 0.29.4.
 // ---------------------------------------------------------------------------
 console.log('[smoke-test] Loading clingo package…');
 try {
@@ -162,4 +162,3 @@ if (nParamModels !== 8) {
 }
 
 console.log('[smoke-test] All checks passed.');
-

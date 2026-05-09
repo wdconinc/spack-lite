@@ -105,17 +105,20 @@ try {
   const result = await page.evaluate(async () => {
     const timeoutMs = 180000;
     const smokeCommand = 'spack --version';
-    let timeoutId = null;
-    const timedResult = await Promise.race([
-      runCommand(smokeCommand),
-      new Promise((_, reject) => {
-        timeoutId = setTimeout(
-          () => reject(new Error(`command timed out after ${timeoutMs}ms: ${smokeCommand}`)),
-          timeoutMs,
-        );
-      }),
-    ]).finally(() => {
-      if (timeoutId !== null) clearTimeout(timeoutId);
+    const timedResult = await new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error(`command timed out after ${timeoutMs}ms: ${smokeCommand}`));
+      }, timeoutMs);
+      runCommand(smokeCommand).then(
+        (value) => {
+          clearTimeout(timeoutId);
+          resolve(value);
+        },
+        (err) => {
+          clearTimeout(timeoutId);
+          reject(err);
+        },
+      );
     });
     return { output: timedResult?.output ?? '', cwd: timedResult?.cwd ?? '' };
   });

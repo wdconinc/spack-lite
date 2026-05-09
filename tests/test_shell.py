@@ -310,6 +310,39 @@ class TestVariableExpansion:
         assert r.stdout == "\n"  # expands to empty string
 
 
+class TestVariableAssignment:
+    def test_simple_assignment(self):
+        """VAR=value should set the variable and produce no output."""
+        r = run_in_shell("SPACK_LITE_TEST_VAR=hello")
+        assert r.returncode == 0
+        assert r.stdout == ""
+
+    def test_assigned_var_is_expanded(self):
+        """Variable set by assignment should be visible in the next command."""
+        records, proc = run_multi_in_shell(
+            ["SPACK_LITE_TEST_VAR=world", "echo $SPACK_LITE_TEST_VAR"],
+        )
+        assert proc.returncode == 0
+        assert len(records) == 2
+        assert records[1]["output"].strip() == "world"
+
+    def test_assignment_prefix_sets_env_for_command(self):
+        """NAME=val cmd should set the env var and run cmd."""
+        records, proc = run_multi_in_shell(
+            ["SPACK_LITE_TEST_VAR=prefix_works echo $SPACK_LITE_TEST_VAR"],
+        )
+        assert proc.returncode == 0
+        assert records[0]["output"].strip() == "prefix_works"
+
+    def test_empty_value(self):
+        """VAR= (empty value) should set var to empty string."""
+        records, proc = run_multi_in_shell(
+            ["SPACK_LITE_TEST_VAR=non_empty", "SPACK_LITE_TEST_VAR=", "echo $SPACK_LITE_TEST_VAR"],
+        )
+        assert proc.returncode == 0
+        assert records[2]["output"] == "\n"  # empty expansion
+
+
 _SPACK_PYTHON_INTERACTIVE_MSG = "Interactive Python is not supported in browser mode."
 
 

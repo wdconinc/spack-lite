@@ -16,6 +16,15 @@ Supported built-ins
   echo, pwd, cd, ls, cat, head, tail, grep,
   mkdir, rm, cp, mv, env, which, find, spack
 
+Variable assignment
+-------------------
+Bare ``NAME=VALUE`` tokens (or multiple leading assignments before a
+command name) are written directly into os.environ.  No ``export``
+keyword is needed:
+
+    SPACK_VIEW=/my/view
+    CC=gcc spack spec zlib
+
 Pipeline (|) support
 --------------------
 Commands are chained by splitting on unquoted pipe characters.  Each
@@ -112,6 +121,11 @@ def _expand_vars(token):
         name = m.group(1) or m.group(2)
         return os.environ.get(name, '')
     return re.sub(r'\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)', _replace, token)
+
+
+# Matches a shell variable assignment token: NAME=VALUE (value may be empty).
+import re as _re
+_ASSIGN_RE = _re.compile(r'^([A-Za-z_][A-Za-z0-9_]*)=(.*)')
 
 
 # ---------------------------------------------------------------------------
@@ -713,12 +727,32 @@ def run_shell_command(line):
             continue
         try:
             try:
-                argv = [_expand_vars(tok) for tok in shlex.split(stage)]
+                raw_tokens = shlex.split(stage)
             except ValueError as exc:
                 stdin_text = f'shell: parse error: {exc}\n'
                 break
 
+            if not raw_tokens:
+                continue
+
+            # Consume any leading NAME=VALUE assignment tokens (applying
+            # variable expansion to the value), setting them in os.environ.
+            # Variable expansion in the remaining command tokens happens
+            # *after* assignments are set, so prefix assignments like
+            # ``VAR=x cmd $VAR`` see the new value.
+            idx = 0
+            while idx < len(raw_tokens):
+                m = _ASSIGN_RE.match(raw_tokens[idx])
+                if m:
+                    os.environ[m.group(1)] = _expand_vars(m.group(2))
+                    idx += 1
+                else:
+                    break
+
+            argv = [_expand_vars(tok) for tok in raw_tokens[idx:]]
+
             if not argv:
+                # Pure assignment(s) — nothing left to execute.
                 continue
 
             cmd_name = argv[0]

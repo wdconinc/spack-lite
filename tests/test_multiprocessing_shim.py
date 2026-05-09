@@ -502,7 +502,7 @@ class TestProcessPoolThreadFailureFallback:
 
 
 # ---------------------------------------------------------------------------
-# ProcessPoolExecutor runtime thread-constructor fallback tests (section 16)
+# ProcessPoolExecutor runtime thread-constructor fallback tests (section 16, case c)
 # ---------------------------------------------------------------------------
 
 _PREAMBLE_THREAD_STARTUP_FAILURE_AT_SUBMIT = f"""\
@@ -557,7 +557,7 @@ def _run_threadfail_submit_shim_script(
 
 
 class TestProcessPoolRuntimeThreadFailureFallback:
-    """Section 16: fallback also applies when submit() hits thread startup errors."""
+    """Section 16 case (c): fallback when submit() hits thread startup errors."""
 
     def test_submit_falls_back_when_thread_creation_fails_at_runtime(self):
         """submit() should still succeed via serial fallback."""

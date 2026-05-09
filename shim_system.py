@@ -60,6 +60,7 @@ For local testing outside Pyodide (standard CPython):
 import builtins
 import sys
 import os
+import errno
 import platform
 import collections
 import json as _json
@@ -1209,7 +1210,13 @@ if _cf is not None:
 
     def _should_fallback_process_pool(exc):
         """Return True for known thread/process-startup failures in constrained runtimes."""
-        if isinstance(exc, OSError) and getattr(exc, "errno", None) in (11, 52):
+        # EAGAIN/EWOULDBLOCK (thread/process resources exhausted) and ENOSYS.
+        # Emscripten/musl paths encountered here may surface ENOSYS as errno 52.
+        if isinstance(exc, OSError) and getattr(exc, "errno", None) in (
+            errno.EAGAIN,
+            errno.ENOSYS,
+            52,
+        ):
             return True
         _msg = str(exc).lower()
         return any(
@@ -1289,6 +1296,7 @@ if _cf is not None:
                     try:
                         self._delegate.shutdown(wait=False, cancel_futures=True)
                     except TypeError:
+                        # Older Python runtimes may not accept cancel_futures.
                         self._delegate.shutdown(wait=False)
             except Exception:
                 pass
@@ -1333,6 +1341,7 @@ if _cf is not None:
                         wait=wait, cancel_futures=cancel_futures
                     )
                 except TypeError:
+                    # Older Python runtimes may not accept cancel_futures.
                     self._delegate.shutdown(wait=wait)
 
         def __enter__(self):

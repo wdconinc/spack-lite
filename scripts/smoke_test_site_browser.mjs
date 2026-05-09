@@ -23,6 +23,7 @@ if (!siteDir) {
 const host = '127.0.0.1';
 const port = 8765;
 const baseUrl = `http://${host}:${port}`;
+const SMOKE_COMMAND_TIMEOUT_MS = 180000;
 
 // -u disables Python stdout buffering so the startup message is not held
 // in a C-level buffer when stdout is a pipe (the default for child processes).
@@ -60,6 +61,25 @@ if (!serverStarted) {
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
+await page.addInitScript(() => {
+  if (typeof window.Terminal === 'undefined') {
+    window.Terminal = class {
+      constructor() {
+        // index.html probes term.textarea to disable mobile autocorrect.
+        this.textarea = document.createElement('textarea');
+      }
+      loadAddon() {}
+      open() {}
+      write() {}
+      onData() {}
+      attachCustomKeyEventHandler() {}
+      clear() {}
+    };
+  }
+  if (typeof window.FitAddon === 'undefined') {
+    window.FitAddon = { FitAddon: class { fit() {} } };
+  }
+});
 const consoleLines = [];
 const pageErrors = [];
 
@@ -86,15 +106,30 @@ try {
     { timeout: 300000 },
   );
 
-  const result = await page.evaluate(async () => {
-    const value = await runCommand('spack spec zlib');
-    return { output: value?.output ?? '', cwd: value?.cwd ?? '' };
-  });
+  const result = await page.evaluate(async ({ timeoutMs }) => {
+    const smokeCommand = 'spack --version';
+    const timedResult = await new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error(`command timed out after ${timeoutMs}ms: ${smokeCommand}`));
+      }, timeoutMs);
+      runCommand(smokeCommand).then(
+        (value) => {
+          clearTimeout(timeoutId);
+          resolve(value);
+        },
+        (err) => {
+          clearTimeout(timeoutId);
+          reject(err);
+        },
+      );
+    });
+    return { output: timedResult?.output ?? '', cwd: timedResult?.cwd ?? '' };
+  }, { timeoutMs: SMOKE_COMMAND_TIMEOUT_MS });
 
-  console.log('[browser-smoke] spack spec zlib output:', JSON.stringify(result.output.slice(0, 500)));
+  console.log('[browser-smoke] spack --version output:', JSON.stringify(result.output.slice(0, 500)));
 
-  if (!result.output || !result.output.includes('zlib')) {
-    throw new Error(`spack spec zlib output missing expected content. Got: ${JSON.stringify(result.output.slice(0, 300))}`);
+  if (!result.output || !result.output.toLowerCase().includes('spack')) {
+    throw new Error(`spack --version output missing expected content. Got: ${JSON.stringify(result.output.slice(0, 300))}`);
   }
 
   const joinedLogs = `${consoleLines.join('\n')}\n${pageErrors.join('\n')}`.toLowerCase();

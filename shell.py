@@ -632,7 +632,7 @@ def _cmd_spack(args, stdin):
             import traceback as _tb
             # Show where the code was interrupted so the user can see which
             # part of the solver or package loading was hanging.
-            buf.write('\nKeyboardInterrupt\nBacktrace (interrupted at):\n')
+            buf.write('\nKeyboardInterrupt\nStack trace (interrupted at):\n')
             buf.write(''.join(_tb.format_stack()))
         finally:
             # spack.main.main() applies debug/backtrace/gc settings but never

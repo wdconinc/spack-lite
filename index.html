@@ -264,9 +264,9 @@ term.onData((data) => {
       sendInterrupt();
     } else {
       // At the prompt — echo ^C and redraw the prompt with a clean buffer.
-      inputBuffer  = '';
+      inputBuffer = '';
       historyIndex = -1;
-      savedInput   = '';
+      savedInput  = '';
       term.write(getPrompt());
     }
     return;

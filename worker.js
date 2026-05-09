@@ -7,7 +7,7 @@
  *     that the Python subprocess shim can delegate real git operations
  *  3. Redirect stdout/stderr to the terminal
  *  4. Install clingo 5.7.1 via pyodide.loadPackage('clingo') — bundled in
- *     Pyodide 0.27.3, classic 5.x API required by Spack's ASP solver
+ *     Pyodide 0.29.4, classic 5.x API required by Spack's ASP solver
  *  5. Fetch and unpack spack-lite.tar.gz into /home/pyodide/spack (MEMFS)
  *  6. Add Spack to sys.path and set SPACK_ROOT / HOME / cwd
  *  7. Inject a fake compiler + package configuration into ~/.spack
@@ -24,7 +24,7 @@
 // ---------------------------------------------------------------------------
 // CDN URLs — pin to specific versions for reproducibility
 // ---------------------------------------------------------------------------
-const PYODIDE_CDN  = 'https://cdn.jsdelivr.net/pyodide/v0.27.3/full/pyodide.js';
+const PYODIDE_CDN  = 'https://cdn.jsdelivr.net/pyodide/v0.29.4/full/pyodide.js';
 // wasm-git: libgit2 compiled to WebAssembly (sync browser variant).
 // Runs inside this Web Worker, which is the only context where synchronous
 // XHR (used for remote git operations) is permitted.
@@ -400,7 +400,7 @@ async function init() {
     // 3. Redirect stdout/stderr to the terminal
     await pyodide.runPythonAsync(STDOUT_REDIRECT);
 
-    // 4. Install clingo.  Pyodide 0.27.3 bundles clingo 5.7.1 (cffi-based,
+    // 4. Install clingo.  Pyodide 0.29.4 bundles clingo 5.7.1 (cffi-based,
     //    classic 5.x Python API) as a regular loadPackage() target.  This is
     //    the API that Spack's solver (spack/solver/asp.py) expects:
     //    clingo.Symbol, clingo.Control(args), clingo.ast.parse_files(files, cb).

@@ -14,7 +14,7 @@
 #
 # Environment variables:
 #   CLINGO_BRANCH    Branch/tag of potassco/clingo to clone.  Default: wip-20
-#   PYODIDE_VERSION  Pyodide version the wheel must target.   Default: 0.25.1
+#   PYODIDE_VERSION  Pyodide version the wheel must target.   Default: 0.29.4
 #   EMSDK_DIR        Directory for the Emscripten SDK clone.  Default: /tmp/emsdk
 #
 # What this script does:
@@ -40,7 +40,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLINGO_REPO="${1:-/tmp/clingo-src}"
 OUTPUT_DIR="${2:-/tmp/clingo-wheel}"
 CLINGO_BRANCH="${CLINGO_BRANCH:-wip-20}"
-PYODIDE_VERSION="${PYODIDE_VERSION:-0.25.1}"
+PYODIDE_VERSION="${PYODIDE_VERSION:-0.29.4}"
 # Directory where the Emscripten SDK (emsdk) will be cloned/cached.
 # Override via environment variable to reuse an existing installation.
 EMSDK_DIR="${EMSDK_DIR:-/tmp/emsdk}"

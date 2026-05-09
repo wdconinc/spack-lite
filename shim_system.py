@@ -1335,7 +1335,10 @@ if _cf is not None:
 
         def shutdown(self, wait=True, cancel_futures=False):
             if self._serial is not None:
-                self._serial.shutdown(wait=wait, cancel_futures=cancel_futures)
+                try:
+                    self._serial.shutdown(wait=wait, cancel_futures=cancel_futures)
+                except TypeError:
+                    self._serial.shutdown(wait=wait)
                 return
             if self._delegate is not None:
                 try:

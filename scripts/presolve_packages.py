@@ -48,6 +48,7 @@ import types
 # ---------------------------------------------------------------------------
 
 _FAKE_LD_PATH = "/lib64/ld-linux-x86-64.so.2"
+_KNOWN_OVERFLOW_ERROR = "signed integer is greater than maximum"
 
 
 def _cmd_str(args) -> str:
@@ -388,7 +389,7 @@ def main() -> int:
             else:
                 failed += 1
                 err_text = captured_err.getvalue().strip()
-                if "signed integer is greater than maximum" in err_text:
+                if _KNOWN_OVERFLOW_ERROR in err_text:
                     known_overflow_failures += 1
                 print(
                     f"    ✗ {pkg} (rc={rc})"
@@ -401,6 +402,8 @@ def main() -> int:
             flush=True,
         )
         exit_code = 0 if failed == 0 else 2
+        # Only tolerate this specific class when *every* failure matches it;
+        # if any other error appears we keep the build failure behavior.
         if failed > 0 and failed == known_overflow_failures:
             print(
                 "  WARNING: pre-solve failures matched known integer-overflow "

@@ -73,7 +73,7 @@ The Spack package repository was split into
 v2.x. `make_spack_lite.sh` clones both `spack/spack` and `spack/spack-packages`
 and produces two archives:
 
-- **`spack-lite.tar.gz`** — core Spack + a seed set of ~35 demo packages,
+- **`spack-lite.tar.gz`** — core Spack + a seed set of ~40 demo packages,
   available immediately when the browser interface becomes active.
 - **`spack-packages.tar.gz`** — all Spack built-in package recipes, fetched
   lazily in the background so the full catalogue is available without delaying
@@ -102,7 +102,7 @@ The script:
    `SPACK_PACKAGES_VERSION=develop`)
 3. Strips `.git`, tests, docs, and large assets from the core
 4. Injects `spack_config/` (fake compiler + package prefs) into `etc/spack/`
-5. Packs a seed set of ~35 demo packages as `spack-lite.tar.gz`
+5. Packs a seed set of ~40 demo packages as `spack-lite.tar.gz`
 6. Packs all built-in package recipes as `spack-packages.tar.gz` (lazy-loaded)
 
 ### 2. Serve the app

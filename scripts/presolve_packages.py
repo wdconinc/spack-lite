@@ -400,14 +400,15 @@ def main() -> int:
             f"  Pre-solve complete: {ok} cached, {failed} failed.",
             flush=True,
         )
+        exit_code = 0 if failed == 0 else 2
         if failed > 0 and failed == known_overflow_failures:
             print(
                 "  WARNING: pre-solve failures matched known integer-overflow "
                 "errors in Spack concretization; keeping partial cache.",
                 flush=True,
             )
-            return 0
-        return 0 if failed == 0 else 2
+            exit_code = 0
+        return exit_code
 
     finally:
         shutil.rmtree(home_dir, ignore_errors=True)

@@ -44,7 +44,7 @@
 # Seed packages in spack-lite.tar.gz (adjust KEEP_PKGS to change the set):
 #   autoconf automake bzip2 cmake curl diffutils expat findutils gcc
 #   gcc-runtime gdbm gettext hdf5 hwloc libaio libbsd libffi libiconv
-#   libpciaccess libsigsegv libtool libxml2 lz4 m4 ncurses numactl
+#   libgfortran libpciaccess libsigsegv libtool libxml2 lz4 m4 ncurses numactl
 #   openblas openmpi openssl patch perl pkgconf python readline sqlite
 #   tar util-linux xz zlib zstd
 #
@@ -66,7 +66,7 @@ SPACK_LITE_DIR="${WORK_DIR}/spack"
 # Packages to keep for the in-browser demo
 KEEP_PKGS=(
   autoconf automake bzip2 cmake curl diffutils expat findutils
-  gcc gcc-runtime
+  gcc gcc-runtime libgfortran
   gdbm gettext hdf5 hwloc libaio libbsd libffi libiconv libpciaccess
   libsigsegv libtool libxml2 lz4 m4 ncurses numactl openblas openmpi
   openssl patch perl pkgconf python readline sqlite tar util-linux

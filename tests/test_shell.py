@@ -327,6 +327,12 @@ class TestSpackSpec:
         assert "zlib" in r.stdout, "Expected 'zlib' in spec output"
         assert "[Errno 52]" not in r.stdout
         assert "[Errno 52]" not in r.stderr
+        # Regression: seed packages (KEEP_PKGS) must include all transitive deps
+        # needed to concretize zlib; missing packages produce "not found" errors.
+        assert "not found in repository" not in r.stdout, (
+            "A package required by 'spack spec zlib' is missing from the seed "
+            f"package set (KEEP_PKGS in make_spack_lite.sh):\n{r.stdout}"
+        )
 
     def test_spack_spec_zlib_twice_no_oom(self, spack_root):
         """Running ``spack spec zlib`` twice must succeed both times.

@@ -52,7 +52,7 @@
 #   findutils gcc
 #   gcc_runtime gdbm gettext glibc gmake gnuconfig hdf5 hwloc jsoncpp libaec libaio libarchive libbsd
 #   libffi libiconv libjpeg_turbo libmng libpciaccess libsigsegv libtool libxcrypt libxml2 lz4 m4 mbedtls ncurses numactl
-#   openblas openmpi openpbs openssl patch perl pkgconf python readline sqlite
+#   openblas openmpi openssl patch perl pkgconf python readline sqlite
 #   tar util_linux util_linux_uuid xz zlib zstd
 #
 # The final spack-lite package set is computed from KEEP_PKGS by repeatedly
@@ -74,7 +74,6 @@
 #   util_linux_uuid — provides 'uuid' (required by python's uuid build variant)
 #   libjpeg_turbo   — provides 'jpeg' (required by libmng)
 #   libaec          — provides 'szip' (required by hdf5)
-#   openpbs         — provides 'pbs'  (required by openmpi's scheduler support)
 #   elfutils        — direct dep of binutils (+debuginfod variant)
 # Without these, spack's concretizer raises UnknownPackageError when scanning
 # all possible dependencies across the seed package set.
@@ -105,7 +104,7 @@ KEEP_PKGS=(
   autoconf automake binutils bzip2 cmake curl diffutils elfutils expat findutils
   compiler_wrapper gcc gcc_runtime glibc gmake gnuconfig
   gdbm gettext hdf5 hwloc jsoncpp libaec libaio libarchive libbsd libffi libiconv libjpeg_turbo libmng libpciaccess
-  libsigsegv libtool libxcrypt libxml2 lz4 m4 mbedtls ncurses numactl openblas openmpi openpbs
+  libsigsegv libtool libxcrypt libxml2 lz4 m4 mbedtls ncurses numactl openblas openmpi
   openssl patch perl pkgconf python readline sqlite tar util_linux util_linux_uuid
   xz zlib zstd
 )

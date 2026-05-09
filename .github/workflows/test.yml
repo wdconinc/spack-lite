@@ -64,7 +64,7 @@ jobs:
           KEEP_PKGS=($(awk '/^KEEP_PKGS=\(/{found=1; next} found && /^\)/{exit} found{print}' \
             scripts/make_spack_lite.sh \
             | tr ' ' '\n' \
-            | grep -E '^[a-z][a-z0-9_]+$'))
+            | grep -E '^[a-z][a-z0-9_]*$'))
 
           SRC=/tmp/spack-packages-src/repos/spack_repo/builtin
           DST="${SPACK_ROOT}/var/spack/repos/spack_repo/builtin"
@@ -78,7 +78,11 @@ jobs:
 
           # Copy only the seed packages so the test mirrors the browser environment.
           for pkg in "${KEEP_PKGS[@]}"; do
-            [ -d "${SRC}/packages/${pkg}" ] && cp -r "${SRC}/packages/${pkg}" "${DST}/packages/${pkg}"
+            if [ -d "${SRC}/packages/${pkg}" ]; then
+              cp -r "${SRC}/packages/${pkg}" "${DST}/packages/${pkg}"
+            else
+              echo "WARNING: KEEP_PKGS package '${pkg}' not found in spack-packages source" >&2
+            fi
           done
 
       - name: Install Spack's Python dependencies

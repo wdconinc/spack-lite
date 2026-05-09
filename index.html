@@ -466,11 +466,11 @@ async function startREPL() {
   // run_shell_command('') returns {"output": "", "cwd": "..."} without side effects.
   try {
     const result = await runCommand('');
-    if (result.cwd !== undefined) {
+    if (result && typeof result === 'object' && result.cwd !== undefined) {
       currentCwd = result.cwd;
     }
   } catch (err) {
-    console.warn('Failed to read initial cwd from worker:', err);
+    console.warn(`Failed to read initial cwd from worker, using fallback prompt path (${currentCwd}):`, err);
   }
 
   enableInput();

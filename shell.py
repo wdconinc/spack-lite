@@ -600,6 +600,15 @@ def _cmd_spack(args, stdin):
                 return (
                     "Loading full package set in background…\n"
                     "All Spack packages will be available shortly.\n"
+                    "\n"
+                    "\x1b[33mWARNING\x1b[0m: The full package archive contains ~7 000 packages.\n"
+                    "Running \x1b[1mspack spec\x1b[0m after loading all packages will cause the\n"
+                    "clingo solver to hang in the browser (grounding is too large for WASM).\n"
+                    "\n"
+                    "The seed package set (spack-lite.tar.gz) already includes the packages\n"
+                    "needed for common operations such as \x1b[1mspack spec zlib\x1b[0m.\n"
+                    "Use \x1b[1mspack load-packages\x1b[0m only to browse or inspect packages\n"
+                    "that are outside the seed set — not for concretization.\n"
                 )
         except Exception:
             pass

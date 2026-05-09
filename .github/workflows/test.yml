@@ -48,12 +48,35 @@ jobs:
         # This overrides the default repos.yaml (which points to GitHub) so
         # that spack spec zlib can find the zlib, gcc, and gcc-runtime recipes
         # without network access.
+        #
+        # IMPORTANT: copy ONLY the seed packages listed in KEEP_PKGS (from
+        # scripts/make_spack_lite.sh) so that test_spack_spec_zlib catches
+        # missing packages the same way a real browser session would.
+        # Loading all ~7 000 packages causes the clingo solver to hang in WASM.
         run: |
           git clone --depth 1 --branch develop \
               https://github.com/spack/spack-packages.git /tmp/spack-packages-src
-          mkdir -p "${SPACK_ROOT}/var/spack/repos/spack_repo"
-          cp -r /tmp/spack-packages-src/repos/spack_repo/builtin \
-                "${SPACK_ROOT}/var/spack/repos/spack_repo/builtin"
+
+          # Parse KEEP_PKGS from make_spack_lite.sh.
+          KEEP_PKGS=($(bash -c '
+            eval "$(sed -n "/^KEEP_PKGS=(/,/^)/p" scripts/make_spack_lite.sh)"
+            echo "${KEEP_PKGS[@]}"
+          '))
+
+          SRC=/tmp/spack-packages-src/repos/spack_repo/builtin
+          DST="${SPACK_ROOT}/var/spack/repos/spack_repo/builtin"
+          mkdir -p "${DST}/packages"
+
+          # Copy build_systems, __init__.py, and repo.yaml (required by API v2).
+          for f in __init__.py repo.yaml; do
+            [ -f "${SRC}/${f}" ] && cp "${SRC}/${f}" "${DST}/${f}"
+          done
+          [ -d "${SRC}/build_systems" ] && cp -r "${SRC}/build_systems" "${DST}/build_systems"
+
+          # Copy only the seed packages so the test mirrors the browser environment.
+          for pkg in "${KEEP_PKGS[@]}"; do
+            [ -d "${SRC}/packages/${pkg}" ] && cp -r "${SRC}/packages/${pkg}" "${DST}/packages/${pkg}"
+          done
 
       - name: Install Spack's Python dependencies
         # Install packages that Spack's unit tests import at collection time.

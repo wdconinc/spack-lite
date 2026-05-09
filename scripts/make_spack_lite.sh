@@ -44,7 +44,7 @@
 # Seed packages in spack-lite.tar.gz (adjust KEEP_PKGS to change the set):
 #   autoconf automake bzip2 cmake compiler_wrapper curl diffutils expat
 #   findutils gcc
-#   gcc_runtime gdbm gettext glibc hdf5 hwloc jsoncpp libaio libarchive libbsd
+#   gcc_runtime gdbm gettext glibc gmake hdf5 hwloc jsoncpp libaio libarchive libbsd
 #   libffi libiconv libmng libpciaccess libsigsegv libtool libxml2 lz4 m4 mbedtls ncurses numactl
 #   openblas openmpi openssl patch perl pkgconf python readline sqlite
 #   tar util_linux xz zlib zstd
@@ -53,8 +53,17 @@
 #   gcc-runtime → gcc_runtime   and   util-linux → util_linux.
 # libgfortran is a virtual package provided by gcc_runtime (not a real
 #   package directory); it must NOT appear in KEEP_PKGS.
+# gmake provides the 'make' virtual package; many packages (including zlib)
+#   depend on it as a build tool. Without it spack spec may fail with
+#   UnknownPackageError for 'make' or similar build-tool virtuals.
 #
-# spack-packages.tar.gz contains all packages and is loaded lazily.
+# WARNING: Loading spack-packages.tar.gz (the full package archive) and then
+#   running 'spack spec' causes the clingo solver to hang in the browser WASM
+#   environment. The full archive (~7000 packages) generates a grounding
+#   problem too large for WebAssembly. Keep KEEP_PKGS complete enough that
+#   users never need to load the full archive for common operations.
+#
+# spack-packages.tar.gz contains all packages and is loaded lazily (on-demand).
 # =============================================================================
 
 set -euo pipefail
@@ -78,7 +87,7 @@ SPACK_LITE_DIR="${WORK_DIR}/spack"
 # UnknownPackageError for 'libc'.
 KEEP_PKGS=(
   autoconf automake bzip2 cmake curl diffutils expat findutils
-  compiler_wrapper gcc gcc_runtime glibc
+  compiler_wrapper gcc gcc_runtime glibc gmake
   gdbm gettext hdf5 hwloc jsoncpp libaio libarchive libbsd libffi libiconv libmng libpciaccess
   libsigsegv libtool libxml2 lz4 m4 mbedtls ncurses numactl openblas openmpi
   openssl patch perl pkgconf python readline sqlite tar util_linux

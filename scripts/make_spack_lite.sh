@@ -43,10 +43,15 @@
 #
 # Seed packages in spack-lite.tar.gz (adjust KEEP_PKGS to change the set):
 #   autoconf automake bzip2 cmake curl diffutils expat findutils gcc
-#   gcc-runtime gdbm gettext hdf5 hwloc libaio libbsd libffi libiconv
-#   libgfortran libpciaccess libsigsegv libtool libxml2 lz4 m4 ncurses numactl
+#   gcc_runtime gdbm gettext hdf5 hwloc libaio libbsd libffi libiconv
+#   libpciaccess libsigsegv libtool libxml2 lz4 m4 ncurses numactl
 #   openblas openmpi openssl patch perl pkgconf python readline sqlite
-#   tar util-linux xz zlib zstd
+#   tar util_linux xz zlib zstd
+#
+# Note: spack Package API v2 uses underscores in directory names, so
+#   gcc-runtime → gcc_runtime   and   util-linux → util_linux.
+# libgfortran is a virtual package provided by gcc_runtime (not a real
+#   package directory); it must NOT appear in KEEP_PKGS.
 #
 # spack-packages.tar.gz contains all packages and is loaded lazily.
 # =============================================================================
@@ -63,13 +68,17 @@ PACKAGES_REPO="${PACKAGES_REPO:-/tmp/spack-packages-src}"
 WORK_DIR="/tmp/spack-lite-build"
 SPACK_LITE_DIR="${WORK_DIR}/spack"
 
-# Packages to keep for the in-browser demo
+# Packages to keep for the in-browser demo.
+# Use underscore names matching spack Package API v2 directory names
+# (gcc-runtime → gcc_runtime, util-linux → util_linux).
+# libgfortran is a *virtual* package provided by gcc_runtime — it has no
+# package directory of its own and must NOT appear in this list.
 KEEP_PKGS=(
   autoconf automake bzip2 cmake curl diffutils expat findutils
-  gcc gcc-runtime libgfortran
+  gcc gcc_runtime
   gdbm gettext hdf5 hwloc libaio libbsd libffi libiconv libpciaccess
   libsigsegv libtool libxml2 lz4 m4 ncurses numactl openblas openmpi
-  openssl patch perl pkgconf python readline sqlite tar util-linux
+  openssl patch perl pkgconf python readline sqlite tar util_linux
   xz zlib zstd
 )
 
@@ -157,12 +166,10 @@ for f in __init__.py repo.yaml; do
   fi
 done
 
-# Packages required for compiler detection to work in the browser.
+# Packages required for compiler detection / spec concretization in the browser.
 # These MUST be present in the spack-packages source or the build aborts.
-# Note: gcc-runtime is not a real package in spack-packages (it is a virtual/
-# external package handled specially by Spack), so it is intentionally excluded
-# from this list and will only produce a warning if missing.
-REQUIRED_PKGS=(gcc)
+# Note: use underscore-style names (Package API v2 convention).
+REQUIRED_PKGS=(gcc gcc_runtime)
 
 for pkg in "${KEEP_PKGS[@]}"; do
   src="${ORIG_PKGS_DIR}/${pkg}"

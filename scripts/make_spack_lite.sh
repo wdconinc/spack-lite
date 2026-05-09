@@ -49,6 +49,9 @@
 #   openblas openmpi openssl patch perl pkgconf python readline sqlite
 #   tar util_linux xz zlib zstd
 #
+# The final spack-lite package set is computed from KEEP_PKGS by repeatedly
+# adding transitive dependencies from Spack's concretized DAGs until stable.
+#
 # Note: spack Package API v2 uses underscores in directory names, so
 #   gcc-runtime → gcc_runtime   and   util-linux → util_linux.
 # libgfortran is a virtual package provided by gcc_runtime (not a real
@@ -69,7 +72,7 @@ PACKAGES_REPO="${PACKAGES_REPO:-/tmp/spack-packages-src}"
 WORK_DIR="/tmp/spack-lite-build"
 SPACK_LITE_DIR="${WORK_DIR}/spack"
 
-# Packages to keep for the in-browser demo.
+# Seed packages to keep for the in-browser demo.
 # Use underscore names matching spack Package API v2 directory names
 # (gcc-runtime → gcc_runtime, util-linux → util_linux).
 # libgfortran is a *virtual* package provided by gcc_runtime — it has no
@@ -169,12 +172,88 @@ for f in __init__.py repo.yaml; do
   fi
 done
 
+# Expand KEEP_PKGS to a stable transitive closure using concretized Spack DAGs.
+SPACK_EXE="${SPACK_REPO}/bin/spack"
+if [[ ! -x "${SPACK_EXE}" ]]; then
+  log "ERROR: Spack executable not found at ${SPACK_EXE} — aborting"
+  exit 1
+fi
+
+SPACK_CFG_DIR="${WORK_DIR}/spack-config"
+mkdir -p "${SPACK_CFG_DIR}"
+cat > "${SPACK_CFG_DIR}/repos.yaml" <<EOF
+repos:
+  - ${BUILTIN_SRC}
+EOF
+
+declare -A KEEP_PKG_SET=()
+for pkg in "${KEEP_PKGS[@]}"; do
+  KEEP_PKG_SET["${pkg}"]=1
+done
+PENDING_PKGS=("${KEEP_PKGS[@]}")
+iter=0
+while [[ "${#PENDING_PKGS[@]}" -gt 0 ]]; do
+  ((iter += 1))
+  log "Resolving transitive package dependencies (iteration ${iter}, ${#PENDING_PKGS[@]} package(s)) …"
+
+  SPEC_ARGS=()
+  for pkg in "${PENDING_PKGS[@]}"; do
+    SPEC_ARGS+=("${pkg//_/-}")
+  done
+  PENDING_PKGS=()
+
+  set +e
+  RESOLVED_NAMES="$(
+    SPACK_DISABLE_LOCAL_CONFIG=1 "${SPACK_EXE}" -C "${SPACK_CFG_DIR}" spec --json "${SPEC_ARGS[@]}" \
+      | python3 -c '
+import json, sys
+
+text = sys.stdin.read()
+decoder = json.JSONDecoder()
+idx = 0
+names = set()
+while idx < len(text):
+    while idx < len(text) and text[idx].isspace():
+        idx += 1
+    if idx >= len(text):
+        break
+    doc, idx = decoder.raw_decode(text, idx)
+    for node in doc.get("spec", {}).get("nodes", []):
+        name = node.get("name")
+        if name:
+            names.add(name.replace("-", "_"))
+for name in sorted(names):
+    print(name)
+'
+  )"
+  rc=$?
+  set -e
+
+  if [[ "${rc}" -ne 0 ]]; then
+    log "ERROR: failed to resolve transitive dependencies for pending package set — aborting"
+    exit 1
+  fi
+
+  while IFS= read -r dep; do
+    [[ -z "${dep}" ]] && continue
+    # Skip virtual/deprecated names that have no package directory.
+    [[ -d "${ORIG_PKGS_DIR}/${dep}" ]] || continue
+    if [[ -z "${KEEP_PKG_SET[${dep}]+x}" ]]; then
+      KEEP_PKG_SET["${dep}"]=1
+      PENDING_PKGS+=("${dep}")
+    fi
+  done <<< "${RESOLVED_NAMES}"
+done
+
+mapfile -t KEEP_PKGS_RESOLVED < <(printf '%s\n' "${!KEEP_PKG_SET[@]}" | sort)
+log "Resolved seed package set size: ${#KEEP_PKGS_RESOLVED[@]} packages"
+
 # Packages required for compiler detection / spec concretization in the browser.
 # These MUST be present in the spack-packages source or the build aborts.
 # Note: use underscore-style names (Package API v2 convention).
 REQUIRED_PKGS=(compiler_wrapper gcc gcc_runtime glibc)
 
-for pkg in "${KEEP_PKGS[@]}"; do
+for pkg in "${KEEP_PKGS_RESOLVED[@]}"; do
   src="${ORIG_PKGS_DIR}/${pkg}"
   if [[ -d "${src}" ]]; then
     cp -r "${src}" "${PKGS_DIR}/${pkg}"

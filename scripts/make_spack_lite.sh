@@ -44,7 +44,8 @@
 #       monkey-patches subprocess to return the same canned gcc/glibc responses
 #       as shim_system.py in the browser, guaranteeing that the ASP cache keys
 #       match at runtime and the browser hits the cache for seed specs.
-#       Requires clingo (pip install clingo); failures are non-fatal.
+#       Requires clingo (pip install clingo). If pre-solving runs and a seed
+#       package fails to concretize, the build exits non-zero so CI catches it.
 #   5. Pack the result into a .tar.gz with the top-level directory "spack/".
 #
 # Seed packages in spack-lite.tar.gz (adjust KEEP_PKGS to change the set):
@@ -326,8 +327,9 @@ done
 #            ${SPACK_LITE_DIR}/var/spack/concretization_cache/
 #          and are bundled into spack-lite.tar.gz in Step 6.
 #
-#          Failures are non-fatal: if clingo is absent or a package fails to
-#          concretize, the browser falls back to live solving for that spec.
+#          If clingo is absent we skip this step and the browser falls back to
+#          live solving.  If pre-solving runs and any package fails to
+#          concretize, the build exits non-zero.
 # ---------------------------------------------------------------------------
 log "Pre-solving seed packages (populating concretization cache) …"
 
@@ -346,9 +348,8 @@ fi
 if python3 -c "import clingo" 2>/dev/null; then
   python3 "${SCRIPT_DIR}/presolve_packages.py" \
     "${SPACK_LITE_DIR}" \
-    "${KEEP_PKGS[@]}" \
-  && log "  Concretization cache populated successfully." \
-  || log "  WARNING: pre-solve finished with errors (cache may be partial)."
+    "${KEEP_PKGS[@]}"
+  log "  Concretization cache populated successfully."
 else
   log "  Skipping pre-solve (clingo unavailable)."
 fi

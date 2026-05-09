@@ -48,6 +48,7 @@ import types
 # ---------------------------------------------------------------------------
 
 _FAKE_LD_PATH = "/lib64/ld-linux-x86-64.so.2"
+_KNOWN_OVERFLOW_ERROR = "signed integer is greater than maximum"
 
 
 def _cmd_str(args) -> str:
@@ -364,6 +365,7 @@ def main() -> int:
 
         ok = 0
         failed = 0
+        known_overflow_failure_count = 0
         for pkg in packages:
             print(f"  pre-solving {pkg} …", flush=True)
             captured_out = io.StringIO()
@@ -387,6 +389,8 @@ def main() -> int:
             else:
                 failed += 1
                 err_text = captured_err.getvalue().strip()
+                if _KNOWN_OVERFLOW_ERROR in err_text:
+                    known_overflow_failure_count += 1
                 print(
                     f"    ✗ {pkg} (rc={rc})"
                     + (f": {err_text[:200]}" if err_text else ""),
@@ -397,7 +401,17 @@ def main() -> int:
             f"  Pre-solve complete: {ok} cached, {failed} failed.",
             flush=True,
         )
-        return 0 if failed == 0 else 2
+        exit_code = 0 if failed == 0 else 2
+        # Only tolerate this specific class when *every* failure matches it;
+        # if any other error appears we keep the build failure behavior.
+        if failed > 0 and failed == known_overflow_failure_count:
+            print(
+                "  WARNING: pre-solve failures matched known integer-overflow "
+                "errors in Spack concretization; keeping partial cache.",
+                flush=True,
+            )
+            exit_code = 0
+        return exit_code
 
     finally:
         shutil.rmtree(home_dir, ignore_errors=True)

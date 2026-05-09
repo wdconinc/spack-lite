@@ -1286,7 +1286,10 @@ if _cf is not None:
                 return
             try:
                 if self._delegate is not None:
-                    self._delegate.shutdown(wait=False, cancel_futures=True)
+                    try:
+                        self._delegate.shutdown(wait=False, cancel_futures=True)
+                    except TypeError:
+                        self._delegate.shutdown(wait=False)
             except Exception:
                 pass
             self._delegate = None
@@ -1325,7 +1328,12 @@ if _cf is not None:
                 self._serial.shutdown(wait=wait, cancel_futures=cancel_futures)
                 return
             if self._delegate is not None:
-                self._delegate.shutdown(wait=wait, cancel_futures=cancel_futures)
+                try:
+                    self._delegate.shutdown(
+                        wait=wait, cancel_futures=cancel_futures
+                    )
+                except TypeError:
+                    self._delegate.shutdown(wait=wait)
 
         def __enter__(self):
             return self

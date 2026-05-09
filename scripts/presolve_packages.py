@@ -365,7 +365,7 @@ def main() -> int:
 
         ok = 0
         failed = 0
-        overflow_failures = 0
+        known_overflow_failure_count = 0
         for pkg in packages:
             print(f"  pre-solving {pkg} …", flush=True)
             captured_out = io.StringIO()
@@ -390,7 +390,7 @@ def main() -> int:
                 failed += 1
                 err_text = captured_err.getvalue().strip()
                 if _KNOWN_OVERFLOW_ERROR in err_text:
-                    overflow_failures += 1
+                    known_overflow_failure_count += 1
                 print(
                     f"    ✗ {pkg} (rc={rc})"
                     + (f": {err_text[:200]}" if err_text else ""),
@@ -404,7 +404,7 @@ def main() -> int:
         exit_code = 0 if failed == 0 else 2
         # Only tolerate this specific class when *every* failure matches it;
         # if any other error appears we keep the build failure behavior.
-        if failed > 0 and failed == overflow_failures:
+        if failed > 0 and failed == known_overflow_failure_count:
             print(
                 "  WARNING: pre-solve failures matched known integer-overflow "
                 "errors in Spack concretization; keeping partial cache.",

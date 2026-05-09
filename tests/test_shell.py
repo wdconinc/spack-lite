@@ -193,6 +193,14 @@ class TestCat:
         assert "# zlib package" in r.stdout
         assert "lzma" not in r.stdout.lower()
 
+    def test_reads_file_with_invalid_utf8_bytes(self, tmp_path):
+        test_file = tmp_path / "cache.bin"
+        test_file.write_bytes(b"\x1f\x8bnot-utf8-cache-data\n")
+        r = run_in_shell(f"cat {test_file}")
+        assert r.returncode == 0
+        assert "not-utf8-cache-data" in r.stdout
+        assert "Error in" not in r.stdout
+
 
 class TestGrep:
     def test_pipe_match(self):

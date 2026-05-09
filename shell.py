@@ -207,8 +207,8 @@ def _cmd_cat(args, stdin):
     out = []
     for f in args:
         try:
-            with open(f) as fh:
-                out.append(fh.read())
+            with open(f, 'rb') as fh:
+                out.append(fh.read().decode('utf-8', errors='replace'))
         except FileNotFoundError:
             out.append(f'cat: {f}: No such file or directory\n')
         except IsADirectoryError:

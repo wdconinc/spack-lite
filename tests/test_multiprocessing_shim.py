@@ -502,6 +502,76 @@ class TestProcessPoolThreadFailureFallback:
 
 
 # ---------------------------------------------------------------------------
+# ProcessPoolExecutor runtime thread-constructor fallback tests (section 16)
+# ---------------------------------------------------------------------------
+
+_PREAMBLE_THREAD_STARTUP_FAILURE_AT_SUBMIT = f"""\
+import sys, os, builtins, threading
+
+_real_import = builtins.__import__
+
+_BLOCKED = {{'_multiprocessing', '_posixshmem'}}
+
+def _blocking_import(name, *args, **kwargs):
+    if name in _BLOCKED and name not in sys.modules:
+        raise ImportError("blocked: " + name)
+    return _real_import(name, *args, **kwargs)
+
+builtins.__import__ = _blocking_import
+
+for _key in list(sys.modules.keys()):
+    if 'multiprocessing' in _key or _key in _BLOCKED:
+        del sys.modules[_key]
+
+# Simulate musl/Emscripten where ENOSYS == 52 for os.pipe()
+def _fake_pipe():
+    raise OSError(52, "Function not implemented")
+os.pipe = _fake_pipe
+
+# Allow one thread startup (_can_start_threads probe), then fail subsequent
+# starts triggered by ProcessPoolExecutor.submit().
+_real_thread_start = threading.Thread.start
+_thread_starts = {{'count': 0}}
+def _flaky_thread_start(self):
+    _thread_starts['count'] += 1
+    if _thread_starts['count'] == 1:
+        return _real_thread_start(self)
+    raise RuntimeError("thread constructor failed: Resource temporarily unavailable")
+threading.Thread.start = _flaky_thread_start
+
+exec(compile(open({_SHIM_PATH!r}).read(), {_SHIM_PATH!r}, "exec"))
+"""
+
+
+def _run_threadfail_submit_shim_script(
+    code: str, *, timeout: int = 30
+) -> subprocess.CompletedProcess:
+    """Run *code* where thread startup fails at ProcessPoolExecutor.submit()."""
+    script = _PREAMBLE_THREAD_STARTUP_FAILURE_AT_SUBMIT + code
+    return subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+class TestProcessPoolRuntimeThreadFailureFallback:
+    """Section 16: fallback also applies when submit() hits thread startup errors."""
+
+    def test_submit_falls_back_when_thread_creation_fails_at_runtime(self):
+        """submit() should still succeed via serial fallback."""
+        r = _run_threadfail_submit_shim_script(
+            "import concurrent.futures\n"
+            "with concurrent.futures.ProcessPoolExecutor(1) as ex:\n"
+            "    fut = ex.submit(pow, 2, 8)\n"
+            "    print(fut.result())\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "256"
+
+
+# ---------------------------------------------------------------------------
 # ProcessPoolExecutor Pyodide-environment fallback tests (section 16, case b)
 #
 # Scenario: the `js` module (Pyodide's JS bridge) is importable, signalling

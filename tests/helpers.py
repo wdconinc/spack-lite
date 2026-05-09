@@ -4,6 +4,7 @@ helpers.py — shared test utilities for spack-lite tests.
 Importable from both test modules and conftest.py.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -32,3 +33,33 @@ def run_in_shell(command, *, timeout=60, extra_env=None):
         timeout=timeout,
         env=env,
     )
+
+
+def run_multi_in_shell(commands, *, timeout=300, extra_env=None):
+    """Run *commands* sequentially in a single shared shell session.
+
+    Unlike multiple :func:`run_in_shell` calls (each spawns a fresh
+    subprocess), all commands here share one Python/Spack environment.  This
+    allows cross-command state — such as Spack's package-repo cache — to be
+    tested.
+
+    Returns a ``(records, proc)`` tuple where *records* is a list of dicts
+    (one per command, each with keys ``"output"`` and ``"cwd"``) and *proc*
+    is the :class:`subprocess.CompletedProcess` for the runner itself.
+    """
+    env = os.environ.copy()
+    if extra_env:
+        env.update(extra_env)
+    proc = subprocess.run(
+        [sys.executable, RUNNER, "--multi", json.dumps(commands)],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=env,
+    )
+    records = []
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if line:
+            records.append(json.loads(line))
+    return records, proc

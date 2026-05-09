@@ -236,6 +236,23 @@ async function loadPackagesBackground() {
     // the JS heap does not hold both the archive and subsequent spack spec
     // working sets simultaneously.
     buffer = null;
+    // Invalidate Spack's in-memory package repository caches so that the
+    // newly extracted packages are visible to subsequent spack commands.
+    // Without this, FastPackageChecker still holds the old on-disk snapshot
+    // and RepoPath._all_package_names keeps its memoized (lru_cache) result.
+    await pyodide.runPythonAsync(`
+try:
+    import spack.repo as _repo
+    for _r in _repo.PATH.repos:
+        if hasattr(_r, '_pkg_checker'):
+            _r._pkg_checker.invalidate()
+    if hasattr(_repo.RepoPath._all_package_names, 'cache_clear'):
+        _repo.RepoPath._all_package_names.cache_clear()
+    if hasattr(_repo.RepoPath._all_package_names_set, 'cache_clear'):
+        _repo.RepoPath._all_package_names_set.cache_clear()
+except Exception:
+    pass
+`);
     setStatus('ready', 'Ready');
     post('stdout', { text: '\n\x1b[2m[spack-lite] Full package set loaded.\x1b[0m\n' });
   } catch (err) {

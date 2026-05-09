@@ -651,8 +651,16 @@ def _cmd_spack(args, stdin):
             pass
         try:
             import spack.repo as _spack_repo
-            if hasattr(_spack_repo, 'path') and hasattr(_spack_repo.path, 'clear_caches'):
-                _spack_repo.path.clear_caches()
+            # Invalidate FastPackageChecker per-repo caches and the memoized
+            # RepoPath.all_package_names result so packages added by
+            # spack load-packages are visible to subsequent commands.
+            for _r in _spack_repo.PATH.repos:
+                if hasattr(_r, '_pkg_checker'):
+                    _r._pkg_checker.invalidate()
+            for _attr in ('_all_package_names', '_all_package_names_set'):
+                _fn = getattr(_spack_repo.RepoPath, _attr, None)
+                if callable(getattr(_fn, 'cache_clear', None)):
+                    _fn.cache_clear()
         except Exception:
             pass
     return buf.getvalue()

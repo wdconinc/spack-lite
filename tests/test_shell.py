@@ -10,7 +10,7 @@ import importlib.util
 import os
 
 import pytest
-from helpers import run_in_shell
+from helpers import run_in_shell, run_multi_in_shell
 
 # ---------------------------------------------------------------------------
 # Load _spack_python_is_interactive from shell.py without running the whole
@@ -445,3 +445,91 @@ class TestSpackPython:
         assert "Errno 29" not in r.stdout
         assert "I/O error" not in r.stdout
         assert _SPACK_PYTHON_INTERACTIVE_MSG in r.stdout
+
+
+class TestSpackRepoCache:
+    """Regression tests for package-repository cache invalidation."""
+
+    def test_repo_cache_invalidated_after_package_added(self, spack_root):
+        """New package directories must be visible to spack commands run after
+        they are added to disk.
+
+        Regression for the spack load-packages cache bug: after extracting
+        spack-packages.tar.gz, FastPackageChecker kept a stale on-disk snapshot
+        and RepoPath._all_package_names kept its memoized (lru_cache) result,
+        so newly added packages were invisible to subsequent spack commands
+        in the same Python session.
+
+        Test scenario (all in one shared subprocess via run_multi_in_shell):
+          command-1 warms _all_package_names cache WITHOUT the dummy package
+          (dummy is created on disk inside command-1 AFTER warming the cache),
+          then command-1's finally-block calls _pkg_checker.invalidate() and
+          cache_clear(); command-2 must find the dummy via the refreshed cache.
+        """
+        import shutil
+        import textwrap
+
+        # Discover packages path from a quick standalone spack python call.
+        r = run_in_shell(
+            "spack python -c \"import spack.repo; print(spack.repo.PATH.repos[-1]._pkg_checker.packages_path)\"",
+            timeout=60,
+        )
+        assert r.returncode == 0, f"Could not find packages path: {r.stdout} {r.stderr}"
+        pkgs_path = r.stdout.strip().splitlines()[0].strip()
+        assert os.path.isdir(pkgs_path), f"packages_path does not exist: {pkgs_path}"
+
+        # Use a simple all-lowercase name so Spack accepts it as a valid package.
+        # Spack's FastPackageChecker and all_package_names() use directory names
+        # directly; spack list shows the hyphen equivalent.
+        dummy_dir_name = "spackltcachetest"
+        dummy_dir = os.path.join(pkgs_path, dummy_dir_name)
+
+        # Script run by command-1: warm the package-name cache WITHOUT the
+        # dummy package (the dummy is created ON DISK after all_package_names()
+        # runs), simulating background extraction that arrives mid-session.
+        # command-1's finally-block then calls _pkg_checker.invalidate() and
+        # cache_clear(), so command-2 starts with a refreshed package list.
+        import tempfile
+        script_fd, script_path = tempfile.mkstemp(suffix=".py", prefix="spack_cache_test_")
+        try:
+            with os.fdopen(script_fd, "w") as fh:
+                fh.write(textwrap.dedent(f"""
+                    import os, spack.repo
+                    # Warm the memoized package-name cache (dummy NOT on disk yet).
+                    count = len(spack.repo.PATH.all_package_names())
+                    print(count)
+                    # Simulate background package extraction: create dummy dir now.
+                    dummy_dir = {dummy_dir!r}
+                    os.makedirs(dummy_dir, exist_ok=True)
+                    pkg_py = os.path.join(dummy_dir, "package.py")
+                    with open(pkg_py, "w") as f:
+                        f.write(
+                            "from spack.package import *\\n"
+                            "class Spackltcachetest(Package):\\n"
+                            "    homepage = 'https://example.com'\\n"
+                            "    url = 'https://example.com/p-1.0.tar.gz'\\n"
+                            "    version('1.0', sha256='a'*64)\\n"
+                        )
+                """))
+
+            commands = [
+                f"spack python {script_path}",
+                f"spack list {dummy_dir_name}",
+            ]
+            records, proc = run_multi_in_shell(commands, timeout=180)
+            assert proc.returncode == 0, (
+                f"Multi-shell session failed.\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+            )
+            assert len(records) == 2, f"Expected 2 records, got {len(records)}"
+
+            list_output = records[1]["output"]
+            assert dummy_dir_name in list_output, (
+                f"Package '{dummy_dir_name}' not found after cache invalidation.\n"
+                f"spack list output: {list_output!r}\n"
+                "The package-repo cache was not invalidated between commands.  "
+                "_pkg_checker.invalidate() and lru_cache.cache_clear() must be "
+                "called in _cmd_spack's finally-block."
+            )
+        finally:
+            os.unlink(script_path)
+            shutil.rmtree(dummy_dir, ignore_errors=True)

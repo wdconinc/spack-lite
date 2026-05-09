@@ -126,6 +126,17 @@ if __name__ == "__main__":
         print("Usage: pyodide_runner.py <shell command>", file=sys.stderr)
         sys.exit(2)
 
+    if sys.argv[1] == "--multi":
+        # Multi-command mode: remaining args are JSON-encoded list of commands.
+        # All commands share the same Python environment (same Spack session),
+        # allowing cross-command state (e.g., cache invalidation) to be tested.
+        # Output: newline-delimited JSON, one record per command.
+        _commands = json.loads(sys.argv[2])
+        for _cmd in _commands:
+            _data = json.loads(run_shell_command(_cmd))  # noqa: F821
+            sys.stdout.write(json.dumps(_data) + "\n")
+        sys.exit(0)
+
     _command = " ".join(sys.argv[1:])
     _data = json.loads(run_shell_command(_command))  # noqa: F821 — defined by exec
     _output = _data.get("output", "")

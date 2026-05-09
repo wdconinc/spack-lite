@@ -499,3 +499,92 @@ class TestProcessPoolThreadFailureFallback:
         )
         assert r.returncode == 0, r.stderr
         assert r.stdout.strip() == "256"
+
+
+# ---------------------------------------------------------------------------
+# ProcessPoolExecutor Pyodide-environment fallback tests (section 16, case b)
+#
+# Scenario: the `js` module (Pyodide's JS bridge) is importable, signalling
+# that we are running inside Pyodide/WASM where process forking is impossible
+# and thread limits may be hit during concretisation.  The shim should replace
+# ProcessPoolExecutor with the serial fallback unconditionally.
+# ---------------------------------------------------------------------------
+
+_PREAMBLE_PYODIDE_ENV = f"""\
+import sys, os, builtins, types
+
+_real_import = builtins.__import__
+
+_BLOCKED = {{'_multiprocessing', '_posixshmem'}}
+
+def _blocking_import(name, *args, **kwargs):
+    if name in _BLOCKED and name not in sys.modules:
+        raise ImportError("blocked: " + name)
+    return _real_import(name, *args, **kwargs)
+
+builtins.__import__ = _blocking_import
+
+for _key in list(sys.modules.keys()):
+    if 'multiprocessing' in _key or _key in _BLOCKED:
+        del sys.modules[_key]
+
+# Simulate musl/Emscripten where ENOSYS == 52 for os.pipe()
+def _fake_pipe():
+    raise OSError(52, "Function not implemented")
+os.pipe = _fake_pipe
+
+# Install a stub 'js' module — present only in Pyodide (its JS bridge).
+# _is_pyodide() in shim_system.py detects this to apply the serial fallback
+# even when thread startup did not fail at load time.
+sys.modules['js'] = types.ModuleType('js')
+
+exec(compile(open({_SHIM_PATH!r}).read(), {_SHIM_PATH!r}, "exec"))
+"""
+
+
+def _run_pyodide_env_shim_script(
+    code: str, *, timeout: int = 30
+) -> subprocess.CompletedProcess:
+    """Run *code* in an environment that simulates Pyodide (js module present)."""
+    script = _PREAMBLE_PYODIDE_ENV + code
+    return subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+class TestProcessPoolPyodideFallback:
+    """Section 16 case (b): serial fallback when the Pyodide JS bridge is present."""
+
+    def test_process_pool_executor_replaced_in_pyodide(self):
+        """ProcessPoolExecutor should be _SerialProcessPoolExecutor in Pyodide."""
+        r = _run_pyodide_env_shim_script(
+            "import concurrent.futures\n"
+            "print(concurrent.futures.ProcessPoolExecutor.__name__)\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "_SerialProcessPoolExecutor"
+
+    def test_submit_works_in_pyodide(self):
+        """submit() should execute work and return a resolved Future in Pyodide."""
+        r = _run_pyodide_env_shim_script(
+            "import concurrent.futures\n"
+            "with concurrent.futures.ProcessPoolExecutor(1) as ex:\n"
+            "    fut = ex.submit(pow, 2, 8)\n"
+            "    print(fut.result())\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "256"
+
+    def test_map_works_in_pyodide(self):
+        """map() should work with the serial fallback in Pyodide."""
+        r = _run_pyodide_env_shim_script(
+            "import concurrent.futures\n"
+            "with concurrent.futures.ProcessPoolExecutor(1) as ex:\n"
+            "    results = list(ex.map(str, [1, 2, 3]))\n"
+            "    print(results)\n"
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == "['1', '2', '3']"

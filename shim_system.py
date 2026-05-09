@@ -24,7 +24,7 @@ Modules patched
 13. _multiprocessing — stub C extension; SemLock backed by threading primitives
 14. _posixshmem     — stub C extension; shm_open/shm_unlink raise OSError(ENOSYS)
 15. ProcessPoolExecutor — _ThreadWakeup patched to avoid os.pipe() (ENOSYS in WASM)
-16. ProcessPoolExecutor — serial fallback when thread startup is unavailable
+16. ProcessPoolExecutor — serial fallback when threads unavailable or in Pyodide/WASM
 
 Git operations
 --------------
@@ -1146,16 +1146,28 @@ except OSError as _pipe_err:
 
 # ---------------------------------------------------------------------------
 # 16.  Patch concurrent.futures.ProcessPoolExecutor when threads are unavailable
+#      or when running in a Pyodide/WASM environment.
 #
-#      In some browser/WASM builds, creating a native thread fails with:
-#          "thread constructor failed: Resource temporarily unavailable"
-#      ProcessPoolExecutor requires an internal manager thread even before any
-#      workers execute user code, so `spack spec zlib` fails at executor
-#      construction time.
+#      Two scenarios where ProcessPoolExecutor fails are handled:
 #
-#      Fix: detect thread-start failure once at startup and replace
-#      concurrent.futures.ProcessPoolExecutor with a serial, in-process
-#      executor that preserves the submit/map/shutdown API surface Spack uses.
+#      (a) Threads completely unavailable at shim load time:
+#          _can_start_threads() returns False.  The manager thread that
+#          ProcessPoolExecutor starts lazily on the first submit() call cannot
+#          be created, so `spack spec zlib` raises:
+#              "thread constructor failed: Resource temporarily unavailable"
+#
+#      (b) Pyodide/WASM environment (detected by importability of the `js`
+#          module, which is Pyodide's JavaScript bridge):
+#          Process forking/spawning is impossible in Emscripten WASM, so
+#          ProcessPoolExecutor can never execute work in a child process.
+#          Additionally, the thread pool may be exhausted by Pyodide's own
+#          internal threads by the time the concretiser runs, causing
+#          ProcessPoolExecutor.submit() to fail even if _can_start_threads()
+#          returned True at shim load time.
+#
+#      Fix: replace concurrent.futures.ProcessPoolExecutor with a serial,
+#      in-process executor that preserves the submit/map/shutdown API surface
+#      Spack uses.
 # ---------------------------------------------------------------------------
 try:
     import threading as _threading
@@ -1182,7 +1194,16 @@ def _can_start_threads():
         return False
 
 
-if _cf is not None and not _can_start_threads():
+def _is_pyodide():
+    """Return True when running inside Pyodide (the ``js`` bridge is importable)."""
+    try:
+        import js  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+if _cf is not None and (not _can_start_threads() or _is_pyodide()):
     class _SerialProcessPoolExecutor:
         """Minimal ProcessPoolExecutor-compatible serial fallback."""
 

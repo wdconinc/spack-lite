@@ -44,7 +44,7 @@
 # Seed packages in spack-lite.tar.gz (adjust KEEP_PKGS to change the set):
 #   autoconf automake binutils bzip2 cmake compiler_wrapper curl diffutils expat
 #   findutils gcc
-#   gcc_runtime gdbm gettext glibc gnuconfig hdf5 hwloc jsoncpp libaio libarchive libbsd
+#   gcc_runtime gdbm gettext glibc gmake gnuconfig hdf5 hwloc jsoncpp libaio libarchive libbsd
 #   libffi libiconv libmng libpciaccess libsigsegv libtool libxml2 lz4 m4 mbedtls ncurses numactl
 #   openblas openmpi openssl patch perl pkgconf python readline sqlite
 #   tar util_linux xz zlib zstd
@@ -78,7 +78,7 @@ SPACK_LITE_DIR="${WORK_DIR}/spack"
 # UnknownPackageError for 'libc'.
 KEEP_PKGS=(
   autoconf automake binutils bzip2 cmake curl diffutils expat findutils
-  compiler_wrapper gcc gcc_runtime glibc gnuconfig
+  compiler_wrapper gcc gcc_runtime glibc gmake gnuconfig
   gdbm gettext hdf5 hwloc jsoncpp libaio libarchive libbsd libffi libiconv libmng libpciaccess
   libsigsegv libtool libxml2 lz4 m4 mbedtls ncurses numactl openblas openmpi
   openssl patch perl pkgconf python readline sqlite tar util_linux

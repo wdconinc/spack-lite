@@ -23,6 +23,7 @@ if (!siteDir) {
 const host = '127.0.0.1';
 const port = 8765;
 const baseUrl = `http://${host}:${port}`;
+const SMOKE_COMMAND_TIMEOUT_MS = 180000;
 
 // -u disables Python stdout buffering so the startup message is not held
 // in a C-level buffer when stdout is a pipe (the default for child processes).
@@ -63,7 +64,10 @@ const page = await browser.newPage();
 await page.addInitScript(() => {
   if (typeof window.Terminal === 'undefined') {
     window.Terminal = class {
-      constructor() { this.textarea = document.createElement('textarea'); }
+      constructor() {
+        // index.html probes term.textarea to disable mobile autocorrect.
+        this.textarea = document.createElement('textarea');
+      }
       loadAddon() {}
       open() {}
       write() {}
@@ -102,8 +106,7 @@ try {
     { timeout: 300000 },
   );
 
-  const result = await page.evaluate(async () => {
-    const timeoutMs = 180000;
+  const result = await page.evaluate(async ({ timeoutMs }) => {
     const smokeCommand = 'spack --version';
     const timedResult = await new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
@@ -121,7 +124,7 @@ try {
       );
     });
     return { output: timedResult?.output ?? '', cwd: timedResult?.cwd ?? '' };
-  });
+  }, { timeoutMs: SMOKE_COMMAND_TIMEOUT_MS });
 
   console.log('[browser-smoke] spack --version output:', JSON.stringify(result.output.slice(0, 500)));
 

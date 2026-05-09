@@ -43,7 +43,7 @@
 #
 # Seed packages in spack-lite.tar.gz (adjust KEEP_PKGS to change the set):
 #   autoconf automake bzip2 cmake curl diffutils expat findutils gcc
-#   gcc_runtime gdbm gettext hdf5 hwloc libaio libbsd libffi libiconv
+#   gcc_runtime gdbm gettext glibc hdf5 hwloc libaio libbsd libffi libiconv
 #   libpciaccess libsigsegv libtool libxml2 lz4 m4 ncurses numactl
 #   openblas openmpi openssl patch perl pkgconf python readline sqlite
 #   tar util_linux xz zlib zstd
@@ -73,9 +73,11 @@ SPACK_LITE_DIR="${WORK_DIR}/spack"
 # (gcc-runtime → gcc_runtime, util-linux → util_linux).
 # libgfortran is a *virtual* package provided by gcc_runtime — it has no
 # package directory of its own and must NOT appear in this list.
+# glibc provides the 'libc' virtual package; without it spack spec fails with
+# UnknownPackageError for 'libc'.
 KEEP_PKGS=(
   autoconf automake bzip2 cmake curl diffutils expat findutils
-  gcc gcc_runtime
+  gcc gcc_runtime glibc
   gdbm gettext hdf5 hwloc libaio libbsd libffi libiconv libpciaccess
   libsigsegv libtool libxml2 lz4 m4 ncurses numactl openblas openmpi
   openssl patch perl pkgconf python readline sqlite tar util_linux
@@ -169,7 +171,7 @@ done
 # Packages required for compiler detection / spec concretization in the browser.
 # These MUST be present in the spack-packages source or the build aborts.
 # Note: use underscore-style names (Package API v2 convention).
-REQUIRED_PKGS=(gcc gcc_runtime)
+REQUIRED_PKGS=(gcc gcc_runtime glibc)
 
 for pkg in "${KEEP_PKGS[@]}"; do
   src="${ORIG_PKGS_DIR}/${pkg}"

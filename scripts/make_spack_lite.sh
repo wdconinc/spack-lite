@@ -44,8 +44,8 @@
 # Seed packages in spack-lite.tar.gz (adjust KEEP_PKGS to change the set):
 #   autoconf automake bzip2 cmake compiler_wrapper curl diffutils expat
 #   findutils gcc
-#   gcc_runtime gdbm gettext glibc hdf5 hwloc libaio libbsd libffi libiconv
-#   libmng libpciaccess libsigsegv libtool libxml2 lz4 m4 ncurses numactl
+#   gcc_runtime gdbm gettext glibc hdf5 hwloc libaio libarchive libbsd
+#   libffi libiconv libmng libpciaccess libsigsegv libtool libxml2 lz4 m4 ncurses numactl
 #   openblas openmpi openssl patch perl pkgconf python readline sqlite
 #   tar util_linux xz zlib zstd
 #
@@ -79,7 +79,7 @@ SPACK_LITE_DIR="${WORK_DIR}/spack"
 KEEP_PKGS=(
   autoconf automake bzip2 cmake curl diffutils expat findutils
   compiler_wrapper gcc gcc_runtime glibc
-  gdbm gettext hdf5 hwloc libaio libbsd libffi libiconv libmng libpciaccess
+  gdbm gettext hdf5 hwloc libaio libarchive libbsd libffi libiconv libmng libpciaccess
   libsigsegv libtool libxml2 lz4 m4 ncurses numactl openblas openmpi
   openssl patch perl pkgconf python readline sqlite tar util_linux
   xz zlib zstd

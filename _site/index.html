@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spack-Lite — Browser Terminal</title>
+
+  <!-- coi-serviceworker: adds COOP/COEP headers via a service worker so that
+       SharedArrayBuffer (required for pyodide.setInterruptBuffer) is available
+       on GitHub Pages and other hosts that don't serve these headers natively.
+       Must be the first script to run so the SW is registered before Pyodide. -->
+  <script src="https://cdn.jsdelivr.net/npm/coi-serviceworker@0.1.9/coi-serviceworker.min.js"></script>
+
+  <!-- xterm.js -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #1e1e2e;
+      color: #cdd6f4;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+    }
+
+    header {
+      background: #181825;
+      border-bottom: 1px solid #313244;
+      padding: 0.5rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-shrink: 0;
+    }
+
+    header h1 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #cba6f7;
+      letter-spacing: 0.05em;
+    }
+
+    #status-badge {
+      font-size: 0.75rem;
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      background: #313244;
+      color: #a6adc8;
+      transition: background 0.3s, color 0.3s;
+    }
+    #status-badge.loading  { background: #fab387; color: #1e1e2e; }
+    #status-badge.ready    { background: #a6e3a1; color: #1e1e2e; }
+    #status-badge.packages-loading { background: #89b4fa; color: #1e1e2e; }
+    #status-badge.error    { background: #f38ba8; color: #1e1e2e; }
+
+    #version-label {
+      font-size: 0.7rem;
+      color: #585b70;
+      margin-left: auto;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    }
+
+    #cancel-btn {
+      display: none;
+      font-size: 0.75rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: 6px;
+      border: 1px solid #f38ba8;
+      background: transparent;
+      color: #f38ba8;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 0.15s, color 0.15s;
+    }
+    #cancel-btn:hover, #cancel-btn:active {
+      background: #f38ba8;
+      color: #1e1e2e;
+    }
+
+    #terminal-wrapper {
+      flex: 1;
+      padding: 0.5rem;
+      overflow: hidden;
+    }
+
+    #terminal {
+      height: 100%;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>⚗ Spack-Lite</h1>
+  <span id="status-badge" class="loading">Loading Pyodide…</span>
+  <button id="cancel-btn" title="Interrupt running command (Ctrl+C)">⛔ Cancel</button>
+  <span id="version-label">94846ac</span>
+</header>
+
+<div id="terminal-wrapper">
+  <div id="terminal"></div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Terminal setup
+// ---------------------------------------------------------------------------
+const isCoarsePointer =
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(pointer: coarse)').matches;
+
+const term = new Terminal({
+  theme: {
+    background:  '#1e1e2e',
+    foreground:  '#cdd6f4',
+    cursor:      '#f5c2e7',
+    black:       '#45475a',
+    red:         '#f38ba8',
+    green:       '#a6e3a1',
+    yellow:      '#f9e2af',
+    blue:        '#89b4fa',
+    magenta:     '#cba6f7',
+    cyan:        '#89dceb',
+    white:       '#bac2de',
+    brightBlack: '#585b70',
+  },
+  fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+  fontSize: 14,
+  lineHeight: 1.3,
+  cursorStyle: 'block',
+  cursorBlink: true,
+  // Mobile browsers often cannot select canvas-rendered terminal output
+  // reliably. Enabling screenReaderMode exposes accessible text rows that can
+  // be selected/copied with native touch gestures.
+  screenReaderMode: isCoarsePointer,
+});
+const fitAddon = new FitAddon.FitAddon();
+term.loadAddon(fitAddon);
+term.open(document.getElementById('terminal'));
+function updateViewportHeight() {
+  const viewportHeight = window.visualViewport
+    ? window.visualViewport.height
+    : document.documentElement.clientHeight;
+  document.body.style.height = `${viewportHeight}px`;
+}
+
+function fitTerminal() {
+  fitAddon.fit();
+}
+
+let pendingViewportFrame = null;
+function scheduleViewportUpdate() {
+  if (pendingViewportFrame !== null) return;
+  pendingViewportFrame = requestAnimationFrame(() => {
+    pendingViewportFrame = null;
+    updateViewportHeight();
+    fitTerminal();
+  });
+}
+
+updateViewportHeight();
+fitTerminal();
+window.addEventListener('resize', scheduleViewportUpdate);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', scheduleViewportUpdate);
+}
+
+// Prevent mobile keyboards from autocorrecting / autocapitalising input,
+// which would garble the terminal line when space is typed after an
+// unrecognised word like "spack".
+if (term.textarea) {
+  term.textarea.setAttribute('autocorrect', 'off');
+  term.textarea.setAttribute('autocapitalize', 'none');
+  term.textarea.setAttribute('spellcheck', 'false');
+
+  // HTML attributes alone are not enough: on iOS/Android the keyboard
+  // still fires autocorrect replacements through the beforeinput/input
+  // event path, bypassing xterm.js's keydown handler entirely.  xterm.js
+  // processes these input events internally (not via term.onKey) and
+  // translates the textarea-value diff into backspace + insert sequences,
+  // making terminal content disappear ("disappearing lines").
+  //
+  // Intercepting beforeinput for insertReplacementText (autocorrect word
+  // replacement) and calling preventDefault() stops the browser from
+  // modifying the textarea value, so the subsequent input event carries
+  // no change and xterm.js sends nothing to the terminal.
+  // Composition-related inputTypes (insertFromComposition,
+  // deleteByComposition) are intentionally not blocked so that IME input
+  // (e.g. Japanese, Chinese) continues to work.
+  term.textarea.addEventListener('beforeinput', (e) => {
+    if (e.inputType === 'insertReplacementText' && e.cancelable) {
+      e.preventDefault();
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Input line editor — supports history navigation with ↑ / ↓
+// ---------------------------------------------------------------------------
+let inputBuffer  = '';
+let inputEnabled = false;
+let resolveInput = null;
+
+// Command history — newest entry is at the end.
+// historyIndex counts backwards from the end (-1 = not navigating).
+let cmdHistory   = [];
+let historyIndex = -1;
+let savedInput   = '';   // preserves in-progress input during history browsing
+
+// Current working directory shown in the prompt (updated after each command).
+let currentCwd = '~';
+
+function getPrompt() {
+  // Strip ASCII control characters (including ESC) to prevent terminal
+  // escape-sequence injection via crafted directory names.
+  const safeCwd = currentCwd.replace(/[\x00-\x1f\x7f]/g, '');
+  return `\x1b[32mspack-lite\x1b[0m:\x1b[34m${safeCwd}\x1b[0m$ `;
+}
+
+function enableInput() {
+  inputEnabled = true;
+}
+
+function disableInput() {
+  inputEnabled = false;
+}
+
+// Prevent the browser from scrolling the page when the user presses the
+// up/down arrow keys to navigate command history.  xterm.js calls
+// preventDefault() on most handled keys, but doing it explicitly here via
+// attachCustomKeyEventHandler is more reliable across browsers.
+// Returning true lets xterm.js continue to process the event normally so
+// that the arrow-key escape sequences still flow through to onData.
+term.attachCustomKeyEventHandler((e) => {
+  if (e.type === 'keydown' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+    e.preventDefault();
+  }
+  return true;
+});
+
+// Use onData instead of onKey so that mobile virtual-keyboard input is
+// captured.  onKey fires from keydown DOM events, which mobile browsers
+// often dispatch with key='Unidentified' / keyCode=0, leaving inputBuffer
+// empty and making Enter appear to delete the typed command.  onData is
+// fed by xterm.js's CompositionHelper which monitors the textarea's input
+// event — the only reliable path on mobile — and also fires for every
+// desktop keypress, so this single handler covers both cases.
+term.onData((data) => {
+  // Ctrl+C (\x03) — always handled, even while a command is running.
+  // Raises KeyboardInterrupt in Python via the interrupt buffer so the user
+  // can abort a hung operation (e.g. spack spec solver loop).
+  if (data === '\x03') {
+    term.write('^C\r\n');
+    if (!inputEnabled) {
+      // A command is running — signal it to stop.
+      sendInterrupt();
+    } else {
+      // At the prompt — echo ^C and redraw the prompt with a clean buffer.
+      inputBuffer = '';
+      historyIndex = -1;
+      savedInput  = '';
+      term.write(getPrompt());
+    }
+    return;
+  }
+
+  if (!inputEnabled) return;
+
+  if (data === '\r' || data === '\n') {             // Enter
+    const line = inputBuffer;
+    inputBuffer  = '';
+    historyIndex = -1;
+    savedInput   = '';
+    term.write('\r\n');
+    // Record non-empty commands in history (avoid consecutive duplicates).
+    if (line && (cmdHistory.length === 0 || line !== cmdHistory[cmdHistory.length - 1])) {
+      cmdHistory.push(line);
+    }
+    if (resolveInput) { resolveInput(line); resolveInput = null; }
+
+  } else if (data === '\x7f' || data === '\b') {    // Backspace / DEL
+    if (inputBuffer.length > 0) {
+      inputBuffer = inputBuffer.slice(0, -1);
+      term.write('\b \b');
+    }
+
+  } else if (data === '\x1b[A') {                   // ↑  — older history entry
+    if (cmdHistory.length === 0) return;
+    if (historyIndex === -1) savedInput = inputBuffer;
+    historyIndex = Math.min(historyIndex + 1, cmdHistory.length - 1);
+    const entry = cmdHistory[cmdHistory.length - 1 - historyIndex];
+    term.write('\r\x1b[K' + getPrompt() + entry);
+    inputBuffer = entry;
+
+  } else if (data === '\x1b[B') {                   // ↓  — newer history entry / restore
+    if (historyIndex === -1) return;
+    historyIndex -= 1;
+    const entry = historyIndex === -1 ? savedInput
+                                      : cmdHistory[cmdHistory.length - 1 - historyIndex];
+    term.write('\r\x1b[K' + getPrompt() + entry);
+    inputBuffer = entry;
+
+  } else if (data.length > 0 && !data.startsWith('\x1b')) {
+    // Printable characters.  On desktop this is a single character; on mobile
+    // it may be several characters at once (paste, autocomplete insertion).
+    // Filter using numeric code points: keep >= 0x20 and explicitly exclude
+    // DEL (0x7f) so that string-comparison edge cases can't slip control
+    // characters into inputBuffer or the terminal display.
+    const printable = [...data].filter(ch => {
+      const cp = ch.codePointAt(0);
+      return cp >= 0x20 && cp !== 0x7f;
+    }).join('');
+    if (printable) {
+      inputBuffer += printable;
+      term.write(printable);
+    }
+  }
+});
+
+function readLine() {
+  return new Promise(resolve => { resolveInput = resolve; });
+}
+
+// ---------------------------------------------------------------------------
+// Web Worker
+// ---------------------------------------------------------------------------
+const worker = new Worker('worker.js');
+const badge  = document.getElementById('status-badge');
+const cancelBtn = document.getElementById('cancel-btn');
+
+// ---------------------------------------------------------------------------
+// Interrupt buffer — allows the main thread to raise KeyboardInterrupt in
+// Pyodide (Python) running inside the Web Worker without terminating it.
+//
+// SharedArrayBuffer requires Cross-Origin-Opener-Policy: same-origin and
+// Cross-Origin-Embedder-Policy: require-corp headers, which are injected by
+// the coi-serviceworker loaded at the top of this page.
+//
+// Protocol (Pyodide convention):
+//   interruptBuffer[0] === 0  → no interrupt
+//   interruptBuffer[0] === 2  → raise KeyboardInterrupt (SIGINT)
+// ---------------------------------------------------------------------------
+let interruptBuffer = null;
+if (typeof SharedArrayBuffer !== 'undefined') {
+  interruptBuffer = new Int32Array(new SharedArrayBuffer(4));
+  // The worker receives the buffer after it has been created and the
+  // worker.onmessage handler is in place, so we post it immediately.
+  // worker.js calls pyodide.setInterruptBuffer(interruptBuffer) on receipt.
+  worker.postMessage({ type: 'set-interrupt-buffer', buffer: interruptBuffer });
+}
+
+/** Reset the interrupt buffer to 0 so the next command starts clean. */
+function resetInterruptBuffer() {
+  if (interruptBuffer) Atomics.store(interruptBuffer, 0, 0);
+}
+
+/** Raise KeyboardInterrupt in the running Python command, if possible. */
+function sendInterrupt() {
+  if (interruptBuffer) {
+    // Signal Python to raise KeyboardInterrupt.
+    Atomics.store(interruptBuffer, 0, 2);
+  } else {
+    // SharedArrayBuffer unavailable — terminate the worker and reload.
+    // This is a last-resort fallback for environments that cannot set COOP/COEP.
+    term.write('\r\n\x1b[33m[spack-lite] SharedArrayBuffer unavailable — reloading page to cancel.\x1b[0m\r\n');
+    setTimeout(() => location.reload(), 1500);
+  }
+}
+
+let pendingResolve = null;
+let pendingReject  = null;
+let replStarted    = false;
+
+worker.onmessage = ({ data }) => {
+  switch (data.type) {
+    case 'status':
+      badge.className = data.state;
+      badge.textContent = data.message;
+      if (data.state === 'ready' && !replStarted) { replStarted = true; startREPL(); }
+      if (data.state === 'error') {
+        term.write('\r\n\x1b[31m' + data.message + '\x1b[0m\r\n');
+      }
+      break;
+
+    case 'stdout':
+      // Convert LF → CR+LF for xterm.js
+      term.write(data.text.replace(/\n/g, '\r\n'));
+      break;
+
+    case 'result':
+      if (pendingResolve) { pendingResolve(data); pendingResolve = null; }
+      break;
+
+    case 'error':
+      if (pendingReject) { pendingReject(data.message); pendingReject = null; }
+      else term.write('\r\n\x1b[31mError: ' + data.message + '\x1b[0m\r\n');
+      break;
+
+    default:
+      console.warn('Unknown worker message', data);
+  }
+};
+
+function runCommand(cmdStr) {
+  // Clear any leftover interrupt signal before starting a new command so that
+  // a previous Ctrl+C does not immediately cancel the next command.
+  resetInterruptBuffer();
+  return new Promise((resolve, reject) => {
+    pendingResolve = resolve;
+    pendingReject  = reject;
+    worker.postMessage({ type: 'run', command: cmdStr });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// REPL
+// ---------------------------------------------------------------------------
+const HELP_TEXT = `
+\x1b[33mAvailable commands:\x1b[0m
+  \x1b[1mspack\x1b[0m list [<query>]        — list available packages
+  \x1b[1mspack\x1b[0m info <package>        — show package metadata
+  \x1b[1mspack\x1b[0m spec <spec>           — concretize a spec
+  \x1b[1mspack\x1b[0m load-packages         — fetch & load the full package set
+  \x1b[1mls\x1b[0m [-la] [<path>]          — list directory contents
+  \x1b[1mcd\x1b[0m [<path>]               — change directory  (\x1b[2m~ supported\x1b[0m)
+  \x1b[1mpwd\x1b[0m                        — print working directory
+  \x1b[1mcat\x1b[0m <file>                 — print file contents
+  \x1b[1mecho\x1b[0m <text>                — print text
+  \x1b[1mgrep\x1b[0m [-inv] <pat> [<file>] — search for pattern
+  \x1b[1mhead\x1b[0m / \x1b[1mtail\x1b[0m [-n N] [<file>]  — first / last N lines
+  \x1b[1mmkdir\x1b[0m / \x1b[1mrm\x1b[0m / \x1b[1mcp\x1b[0m / \x1b[1mmv\x1b[0m       — file operations
+  \x1b[1menv\x1b[0m                        — show environment variables
+  \x1b[1mwhich\x1b[0m <cmd>                — locate a command or built-in
+  \x1b[1mfind\x1b[0m [<path>] [-name <pat>] [-type f|d] — find files
+  \x1b[1mhelp\x1b[0m                       — show this help
+  \x1b[1mclear\x1b[0m                      — clear the terminal
+  \x1b[2m↑ / ↓ arrow keys navigate command history\x1b[0m
+  \x1b[2mCtrl+C (or ⛔ Cancel button) interrupts a running command\x1b[0m
+
+\x1b[2mTip: try  spack spec zlib+shared\x1b[0m
+\x1b[2mTip: try  ls /home/pyodide/spack/lib/spack | head -20\x1b[0m
+`;
+
+// Show / hide the cancel button together with input enable/disable so that
+// mobile users always have a visible tap target to interrupt a running command.
+function showCancelBtn() { cancelBtn.style.display = 'inline-block'; }
+function hideCancelBtn()  { cancelBtn.style.display = 'none'; }
+
+cancelBtn.addEventListener('click', () => {
+  term.write('^C\r\n');
+  sendInterrupt();
+});
+
+async function startREPL() {
+  term.write('\r\n\x1b[1m\x1b[35m⚗ Spack-Lite\x1b[0m  —  Spack inside your browser via Pyodide\r\n');
+  term.write(HELP_TEXT.replace(/\n/g, '\r\n'));
+
+  enableInput();
+
+  while (true) {
+    term.write(getPrompt());
+    const line = (await readLine()).trim();
+    if (!line) continue;
+
+    if (line === 'clear') { term.clear(); continue; }
+    if (line === 'help')  { term.write(HELP_TEXT.replace(/\n/g, '\r\n')); continue; }
+
+    // Send to worker
+    disableInput();
+    showCancelBtn();
+    try {
+      const result = await runCommand(line);
+      if (result.output) {
+        term.write(result.output.replace(/\n/g, '\r\n'));
+      }
+      if (result.cwd !== undefined) {
+        currentCwd = result.cwd;
+      }
+    } catch (err) {
+      term.write('\x1b[31mError: ' + err + '\x1b[0m\r\n');
+    }
+    hideCancelBtn();
+    // Reset the interrupt buffer so the next command starts clean.
+    resetInterruptBuffer();
+    enableInput();
+  }
+}
+</script>
+</body>
+</html>

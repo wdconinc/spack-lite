@@ -60,6 +60,22 @@ if (!serverStarted) {
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
+await page.addInitScript(() => {
+  if (typeof window.Terminal === 'undefined') {
+    window.Terminal = class {
+      constructor() { this.textarea = document.createElement('textarea'); }
+      loadAddon() {}
+      open() {}
+      write() {}
+      onData() {}
+      attachCustomKeyEventHandler() {}
+      clear() {}
+    };
+  }
+  if (typeof window.FitAddon === 'undefined') {
+    window.FitAddon = { FitAddon: class { fit() {} } };
+  }
+});
 const consoleLines = [];
 const pageErrors = [];
 

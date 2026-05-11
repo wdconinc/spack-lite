@@ -247,12 +247,36 @@ async function loadPackagesBackground() {
     // newly extracted packages are visible to subsequent spack commands.
     // Without this, FastPackageChecker still holds the old on-disk snapshot
     // and RepoPath._all_package_names keeps its memoized (lru_cache) result.
+    //
+    // We also delete the on-disk patch/provider/tag index cache files.
+    // Files extracted from spack-packages.tar.gz carry their original git
+    // commit timestamps, which are older than any index that was built
+    // during the current browser session.  RepoIndex._update_index uses
+    // checker.modified_since(index_mtime) to decide which packages need
+    // re-indexing; packages whose mtime is older than the index are silently
+    // skipped, so a package such as `root` would never get its patches
+    // indexed even after the full package archive is loaded.  Deleting the
+    // cache files forces index_existed=False on the next spack command,
+    // which triggers a full rebuild from all packages (modified_since(0)
+    // returns every package), guaranteeing a correct, complete index.
     await pyodide.runPythonAsync(`
 try:
-    import spack.repo as _repo
+    import os, spack.repo as _repo
     for _r in _repo.PATH.repos:
         if hasattr(_r, '_pkg_checker'):
             _r._pkg_checker.invalidate()
+        # Delete stale index cache files so the next spack command
+        # rebuilds them from scratch against the full package set.
+        if hasattr(_r, '_repo_index') and _r._repo_index is not None:
+            _cache = _r.index.cache
+            for _idx in ('patches', 'providers', 'tags'):
+                from spack.spec import SPECFILE_FORMAT_VERSION as _v
+                _fname = f'{_idx}/{_r.namespace}-specfile_v{_v}-index.json'
+                try:
+                    _cache.remove(_fname)
+                except Exception:
+                    pass
+        _r.index.is_fresh = False
     if hasattr(_repo.RepoPath._all_package_names, 'cache_clear'):
         _repo.RepoPath._all_package_names.cache_clear()
     if hasattr(_repo.RepoPath._all_package_names_set, 'cache_clear'):

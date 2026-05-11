@@ -647,3 +647,149 @@ class TestSpackRepoCache:
         finally:
             os.unlink(script_path)
             shutil.rmtree(dummy_dir, ignore_errors=True)
+
+    def test_patch_index_rebuilt_after_old_mtime_package_added(self, spack_root):
+        """Patch index must include patches from packages extracted with old timestamps.
+
+        Root cause: pyodide.unpackArchive preserves original git commit
+        timestamps from the tarball.  When spack-packages.tar.gz is
+        extracted AFTER the patch index has already been built (e.g., the
+        user ran `spack spec zlib` first), every newly extracted package has
+        a mtime OLDER than the index file.  RepoIndex._update_index uses
+        checker.modified_since(index_mtime) to select packages for
+        re-indexing; packages with old mtimes are silently skipped, so their
+        patches are never added to the index.
+
+        Fix (worker.js loadPackagesBackground): after extraction call
+        _cache.remove() on the patch/provider/tag index cache files so that
+        index_existed=False on the next spack command.  modified_since(0)
+        then returns every package and the index is fully rebuilt.
+
+        Test scenario (all in one shared subprocess via run_multi_in_shell):
+          command-1 discovers the packages path; command-2 creates a dummy
+          package with a known fake patch sha256 and an artificially old mtime
+          (epoch 1), then builds the patch index so it does NOT include the
+          dummy; command-3 runs the worker.js cache-invalidation code to
+          delete the stale cache files; command-4 checks that the rebuilt
+          patch index now contains the dummy package's patch sha256.
+        """
+        import shutil
+        import textwrap
+        import tempfile
+
+        # Discover packages path.
+        r = run_in_shell(
+            "spack python -c \"import spack.repo; print(spack.repo.PATH.repos[-1]._pkg_checker.packages_path)\"",
+            timeout=60,
+        )
+        assert r.returncode == 0, f"Could not find packages path: {r.stdout} {r.stderr}"
+        pkgs_path = r.stdout.strip().splitlines()[0].strip()
+        assert os.path.isdir(pkgs_path), f"packages_path does not exist: {pkgs_path}"
+
+        dummy_dir_name = "spackltpatchtest"
+        dummy_dir = os.path.join(pkgs_path, dummy_dir_name)
+        # A clearly fake sha256 we can search for in the rebuilt index.
+        fake_sha256 = "a" * 64
+
+        # Script for command-2: create the dummy package with the fake patch
+        # sha256 and an artificially old mtime (epoch 1), then warm the patch
+        # index WITHOUT the dummy (the old mtime makes modified_since skip it).
+        script_fd, script_path = tempfile.mkstemp(suffix=".py", prefix="spack_patch_test_")
+        try:
+            with os.fdopen(script_fd, "w") as fh:
+                fh.write(textwrap.dedent(f"""
+                    import os, spack.repo
+                    dummy_dir = {dummy_dir!r}
+                    os.makedirs(dummy_dir, exist_ok=True)
+                    pkg_py = os.path.join(dummy_dir, "package.py")
+                    with open(pkg_py, "w") as f:
+                        f.write(
+                            "from spack.package import *\\n"
+                            "class Spackltpatchtest(Package):\\n"
+                            "    homepage = 'https://example.com'\\n"
+                            "    url = 'https://example.com/p-1.0.tar.gz'\\n"
+                            "    version('1.0', sha256='b'*64)\\n"
+                            "    patch('https://example.com/p.patch', sha256='{fake_sha256}')\\n"
+                        )
+                    # Set an artificially old mtime (epoch 1) so
+                    # modified_since() will skip this package.
+                    os.utime(pkg_py, (1, 1))
+                    os.utime(dummy_dir, (1, 1))
+                    # Warm the patch index — dummy will NOT be included.
+                    spack.repo.PATH.repos[-1].index.is_fresh = False
+                    spack.repo.PATH.repos[-1].index._build_all_indexes(allow_stale=False)
+                    print("index_built")
+                """))
+
+            # Script for command-4: verify the fake sha256 is now in the
+            # rebuilt patch index.
+            verify_fd, verify_path = tempfile.mkstemp(suffix=".py", prefix="spack_patch_verify_")
+            try:
+                with os.fdopen(verify_fd, "w") as fh:
+                    fh.write(textwrap.dedent(f"""
+                        import spack.repo, spack.caches
+                        from spack.spec import SPECFILE_FORMAT_VERSION as _v
+                        r = spack.repo.PATH.repos[-1]
+                        cache = r.index.cache
+                        fname = f'patches/{{r.namespace}}-specfile_v{{_v}}-index.json'
+                        # Force a full index rebuild.
+                        r.index.is_fresh = False
+                        r.index._build_all_indexes(allow_stale=False)
+                        patch_cache = r.index.indexes.get('patches')
+                        patch_idx = patch_cache.index if patch_cache is not None else {{}}
+                        if '{fake_sha256}' in patch_idx:
+                            print("patch_found")
+                        else:
+                            print("patch_missing")
+                    """))
+
+                # Invalidation code mirrors what worker.js loadPackagesBackground does.
+                invalidate_cmd = (
+                    "spack python -c \""
+                    "import spack.repo; "
+                    "from spack.spec import SPECFILE_FORMAT_VERSION as _v; "
+                    "[("
+                    "  _r._pkg_checker.invalidate(), "
+                    "  [_r.index.cache.remove(f'{_idx}/{_r.namespace}-specfile_v{_v}-index.json') "
+                    "   for _idx in ('patches','providers','tags')], "
+                    "  setattr(_r.index, 'is_fresh', False)"
+                    ") for _r in spack.repo.PATH.repos "
+                    "  if hasattr(_r, '_pkg_checker') and hasattr(_r, '_repo_index') and _r._repo_index is not None]; "
+                    "print('invalidated')\""
+                )
+
+                commands = [
+                    f"spack python {script_path}",
+                    invalidate_cmd,
+                    f"spack python {verify_path}",
+                ]
+                records, proc = run_multi_in_shell(commands, timeout=180)
+                assert proc.returncode == 0, (
+                    f"Multi-shell session failed.\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+                )
+                assert len(records) == 3, f"Expected 3 records, got {len(records)}"
+
+                build_out = records[0]["output"]
+                assert "index_built" in build_out, (
+                    f"command-1 did not confirm index build: {build_out!r}"
+                )
+
+                invalidate_out = records[1]["output"]
+                assert "invalidated" in invalidate_out, (
+                    f"command-2 did not confirm invalidation: {invalidate_out!r}"
+                )
+
+                verify_out = records[2]["output"]
+                assert "patch_found" in verify_out, (
+                    f"Fake patch sha256 not in rebuilt index after invalidation.\n"
+                    f"verify output: {verify_out!r}\n"
+                    "The patch index cache was not deleted after background package loading.\n"
+                    "worker.js loadPackagesBackground must call _cache.remove() on the "
+                    "patch/provider/tag index files so the next spack command rebuilds them "
+                    "from all packages (including those with old mtimes)."
+                )
+            finally:
+                os.unlink(verify_path)
+        finally:
+            os.unlink(script_path)
+            shutil.rmtree(dummy_dir, ignore_errors=True)

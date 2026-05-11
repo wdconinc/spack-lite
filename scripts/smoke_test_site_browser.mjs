@@ -106,30 +106,50 @@ try {
     { timeout: 300000 },
   );
 
-  const result = await page.evaluate(async ({ timeoutMs }) => {
-    const smokeCommand = 'spack --version';
-    const timedResult = await new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        reject(new Error(`command timed out after ${timeoutMs}ms: ${smokeCommand}`));
-      }, timeoutMs);
-      runCommand(smokeCommand).then(
-        (value) => {
-          clearTimeout(timeoutId);
-          resolve(value);
-        },
-        (err) => {
-          clearTimeout(timeoutId);
-          reject(err);
-        },
-      );
-    });
-    return { output: timedResult?.output ?? '', cwd: timedResult?.cwd ?? '' };
-  }, { timeoutMs: SMOKE_COMMAND_TIMEOUT_MS });
+  /**
+   * Run a single shell command through the page's runCommand() and return its output.
+   * Rejects if the command times out.
+   */
+  async function runSmokeCommand(cmdStr) {
+    return page.evaluate(async ({ cmd, timeoutMs }) => {
+      const timedResult = await new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          reject(new Error(`command timed out after ${timeoutMs}ms: ${cmd}`));
+        }, timeoutMs);
+        runCommand(cmd).then(
+          (value) => { clearTimeout(timeoutId); resolve(value); },
+          (err)   => { clearTimeout(timeoutId); reject(err); },
+        );
+      });
+      return { output: timedResult?.output ?? '', cwd: timedResult?.cwd ?? '' };
+    }, { cmd: cmdStr, timeoutMs: SMOKE_COMMAND_TIMEOUT_MS });
+  }
 
-  console.log('[browser-smoke] spack --version output:', JSON.stringify(result.output.slice(0, 500)));
+  // --- smoke command 1: spack --version ---
+  const versionResult = await runSmokeCommand('spack --version');
+  console.log('[browser-smoke] spack --version output:', JSON.stringify(versionResult.output.slice(0, 500)));
+  if (!versionResult.output || !versionResult.output.toLowerCase().includes('spack')) {
+    throw new Error(`spack --version output missing expected content. Got: ${JSON.stringify(versionResult.output.slice(0, 300))}`);
+  }
 
-  if (!result.output || !result.output.toLowerCase().includes('spack')) {
-    throw new Error(`spack --version output missing expected content. Got: ${JSON.stringify(result.output.slice(0, 300))}`);
+  // --- smoke command 2: spack spec zlib ---
+  // This exercises the clingo concretizer, ProcessPoolExecutor / imap_unordered,
+  // and the serial-fallback shims that are needed in the Pyodide/WASM environment.
+  // Previously only tested in pytest (CPython, threads available) — this is the
+  // first CI check that runs the concretizer inside a real browser/Pyodide context.
+  console.log('[browser-smoke] Running spack spec zlib (exercises concretizer)…');
+  const specResult = await runSmokeCommand('spack spec zlib');
+  console.log('[browser-smoke] spack spec zlib output:', JSON.stringify(specResult.output.slice(0, 800)));
+  if (!specResult.output || !specResult.output.toLowerCase().includes('zlib')) {
+    throw new Error(`spack spec zlib output missing 'zlib'. Got: ${JSON.stringify(specResult.output.slice(0, 500))}`);
+  }
+  // The concretizer must not surface thread-constructor or pipe errors.
+  const specLower = specResult.output.toLowerCase();
+  if (specLower.includes('thread constructor failed') || specLower.includes('errno 52')) {
+    throw new Error(`spack spec zlib raised a WASM-incompatible error:\n${specResult.output.slice(0, 800)}`);
+  }
+  if (specLower.includes('==> error')) {
+    throw new Error(`spack spec zlib returned a Spack error:\n${specResult.output.slice(0, 800)}`);
   }
 
   const joinedLogs = `${consoleLines.join('\n')}\n${pageErrors.join('\n')}`.toLowerCase();
@@ -143,7 +163,7 @@ try {
     }
   }
 
-  console.log('[browser-smoke] Ready badge reached and spack command succeeded.');
+  console.log('[browser-smoke] Ready badge reached and both spack commands succeeded.');
 } finally {
   await browser.close();
   server.kill('SIGTERM');

@@ -625,6 +625,18 @@ def _cmd_spack(args, stdin):
         # -c KEY=VAL, …) are parsed and applied automatically.
         import gc as _gc
         import spack.main as _spack_main
+        # In the Pyodide/WASM environment, spack.util.parallel.ENABLE_PARALLELISM
+        # defaults to True (``sys.platform != "win32"`` is True for "emscripten").
+        # That causes both make_concurrent_executor() and imap_unordered() to attempt
+        # real thread/process creation, which fails in the Pyodide thread-limited
+        # context.  Force the sequential path for all parallel utilities when running
+        # inside Pyodide (detected by the importability of the JS bridge module).
+        try:
+            import spack.util.parallel as _spack_parallel
+            if _is_pyodide():  # noqa: F821 — defined by shim_system.py exec
+                _spack_parallel.ENABLE_PARALLELISM = False
+        except Exception:
+            pass
         _orig_gc = _gc.get_threshold()
         try:
             _spack_main.main(args)

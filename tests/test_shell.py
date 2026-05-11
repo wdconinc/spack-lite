@@ -396,7 +396,50 @@ class TestSpackSpec:
                 f"Unexpected error in output (invocation {i + 1}): {r.stdout}"
             )
 
-    def test_spack_load_packages_not_available_outside_browser(self, spack_root):
+    def test_spack_spec_zlib_in_pyodide_sim(self, spack_root):
+        """``spack spec zlib`` must succeed in the simulated Pyodide/WASM environment.
+
+        This test closes the gap between:
+          - The browser smoke test (which only ran ``spack --version``, skipping the
+            clingo concretizer entirely), and
+          - The standard ``test_spack_spec_zlib`` (which runs in CPython where threads
+            are fully available and the serial fallbacks are never triggered).
+
+        The SPACK_LITE_SIMULATE_PYODIDE=1 flag applied in pyodide_runner.py:
+          (a) installs a stub ``js`` module so _is_pyodide() returns True,
+          (b) blocks ``_multiprocessing`` so the SemLock shim activates,
+          (c) patches os.pipe() to raise ENOSYS (errno 52),
+          (d) patches threading.Thread.start to raise the thread-constructor
+              RuntimeError on all new thread creations.
+
+        A passing result here means the shim's serial-executor fallback and any
+        other WASM-compatibility patches handle the full concretization path.
+        """
+        r = run_in_shell(
+            "spack spec zlib",
+            timeout=120,
+            extra_env={"SPACK_LITE_SIMULATE_PYODIDE": "1"},
+        )
+        assert r.returncode == 0, (
+            "spack spec zlib failed in Pyodide simulation mode.\n"
+            f"stdout: {r.stdout}\n"
+            f"stderr: {r.stderr}"
+        )
+        assert "zlib" in r.stdout, "Expected 'zlib' in spec output (Pyodide sim)"
+        assert "[Errno 52]" not in r.stdout, (
+            "spack spec zlib raised [Errno 52] in Pyodide sim — "
+            "os.pipe() patch or _QueueConnection shim is not working"
+        )
+        assert "thread constructor failed" not in r.stdout.lower(), (
+            "spack spec zlib raised 'thread constructor failed' in Pyodide sim — "
+            "serial executor fallback or ENABLE_PARALLELISM patch is not working"
+        )
+        assert "not found in repository" not in r.stdout, (
+            "A package required by 'spack spec zlib' is missing from the seed "
+            f"package set (KEEP_PKGS in make_spack_lite.sh):\n{r.stdout}"
+        )
+
+
         """``spack load-packages`` outside the browser should show a graceful message."""
         r = run_in_shell("spack load-packages", timeout=30)
         assert r.returncode == 0

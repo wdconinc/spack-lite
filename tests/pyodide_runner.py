@@ -89,6 +89,82 @@ if os.environ.get("SPACK_LITE_MOCK_LZMA_UNAVAILABLE"):
     sys.modules["lzma"] = None  # `import lzma` raises ImportError when None
 
 # ---------------------------------------------------------------------------
+# Optionally simulate the Pyodide/WASM environment constraints.
+#
+# When SPACK_LITE_SIMULATE_PYODIDE=1 is set, three constraints that are
+# present in a real Pyodide WASM runtime are applied before the shim runs:
+#
+#  (a) A stub ``js`` module is installed so that _is_pyodide() in
+#      shim_system.py returns True, triggering the serial ProcessPoolExecutor
+#      fallback unconditionally (rather than waiting for the first failure).
+#
+#  (b) The ``_multiprocessing`` C extension is blocked, exactly as Pyodide
+#      removes it.  shim_system.py's section 13 installs the threading-backed
+#      SemLock stub in response.
+#
+#  (c) ``os.pipe()`` is patched to raise OSError(ENOSYS=52), reproducing the
+#      Emscripten WASM restriction.  shim_system.py's section 15 installs the
+#      queue-backed _QueueConnection in response.
+#
+#  (d) ``threading.Thread.start`` is patched to raise the
+#      "thread constructor failed" RuntimeError after a configurable number of
+#      successful starts (default: 0 extra threads, i.e. all new thread starts
+#      fail).  This exercises the runtime fallback in _ResilientProcessPoolExecutor
+#      and exposes any code path that creates threads outside the patched executor.
+#
+# The combination of (a)–(d) faithfully mimics the thread-starved Pyodide
+# environment without requiring a real browser.
+# ---------------------------------------------------------------------------
+if os.environ.get("SPACK_LITE_SIMULATE_PYODIDE"):
+    import builtins
+    import types
+    import threading as _sim_threading
+
+    # (a) Stub js module — makes _is_pyodide() return True in shim_system.py.
+    sys.modules["js"] = types.ModuleType("js")
+
+    # (b) Block _multiprocessing so shim_system.py installs the SemLock stub.
+    _real_import = builtins.__import__
+
+    def _blocking_import(name, *args, **kwargs):
+        if name == "_multiprocessing" and "_multiprocessing" not in sys.modules:
+            raise ImportError(
+                "The module '_multiprocessing' is removed from the Python "
+                "standard library in the Pyodide distribution due to browser "
+                "limitations."
+            )
+        return _real_import(name, *args, **kwargs)
+
+    builtins.__import__ = _blocking_import
+    for _key in list(sys.modules.keys()):
+        if "multiprocessing" in _key or _key == "_multiprocessing":
+            del sys.modules[_key]
+
+    # (c) Patch os.pipe() to raise ENOSYS (errno 52) — Emscripten restriction.
+    def _fake_pipe():
+        raise OSError(52, "Function not implemented")
+
+    os.pipe = _fake_pipe  # noqa: E731
+
+    # (d) Patch threading.Thread.start to raise the thread-constructor error so
+    #     that any code creating threads outside the patched ProcessPoolExecutor
+    #     is caught.  Allow _PYODIDE_SIM_EXTRA_THREADS extra starts to succeed
+    #     first (default 0: all new thread starts fail immediately).
+    _extra_allowed = int(os.environ.get("SPACK_LITE_SIMULATE_PYODIDE_EXTRA_THREADS", "0"))
+    _sim_thread_budget = [_extra_allowed]
+    _real_thread_start = _sim_threading.Thread.start
+
+    def _fail_thread_start(self):
+        if _sim_thread_budget[0] > 0:
+            _sim_thread_budget[0] -= 1
+            return _real_thread_start(self)
+        raise RuntimeError(
+            "thread constructor failed: Resource temporarily unavailable"
+        )
+
+    _sim_threading.Thread.start = _fail_thread_start
+
+# ---------------------------------------------------------------------------
 # Apply system shims
 # (monkey-patches subprocess, os, platform, grp, pwd, termios, tty, …)
 #

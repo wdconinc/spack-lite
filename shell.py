@@ -550,6 +550,19 @@ def _spack_python_is_interactive(rest):
     return has_i or not has_code_or_script
 
 
+_ANSI_ESCAPE_RE = _re.compile(r'\x1b\[[0-9;]*m')
+
+
+def _suppress_empty_spack_warnings(text):
+    """Drop blank ``==> Warning:`` lines from spack output."""
+    kept = []
+    for line in text.splitlines(keepends=True):
+        if _ANSI_ESCAPE_RE.sub('', line).strip() == '==> Warning:':
+            continue
+        kept.append(line)
+    return ''.join(kept)
+
+
 def _cmd_spack(args, stdin):
     """Route spack sub-commands through the Spack Python API."""
     try:
@@ -738,7 +751,7 @@ def _cmd_spack(args, stdin):
                     _fn.cache_clear()
         except Exception:
             pass
-    return buf.getvalue()
+    return _suppress_empty_spack_warnings(buf.getvalue())
 
 
 # ---------------------------------------------------------------------------

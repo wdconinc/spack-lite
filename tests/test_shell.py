@@ -410,10 +410,13 @@ class TestSpackSpec:
           (b) blocks ``_multiprocessing`` so the SemLock shim activates,
           (c) patches os.pipe() to raise ENOSYS (errno 52),
           (d) patches threading.Thread.start to raise the thread-constructor
-              RuntimeError on all new thread creations.
+              RuntimeError on all new thread creations,
+          (e) patches clingo.Control.solve to raise the same RuntimeError when
+              async_=True — mimicking Pyodide's pthread_create → EAGAIN failure.
 
-        A passing result here means the shim's serial-executor fallback and any
-        other WASM-compatibility patches handle the full concretization path.
+        A passing result requires that shell.py wraps clingo's async solve with a
+        synchronous shim (so async_=True never reaches the C-level thread creation)
+        and that the shim's serial-executor fallback handles any other parallel path.
         """
         r = run_in_shell(
             "spack spec zlib",

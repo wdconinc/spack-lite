@@ -635,6 +635,49 @@ def _cmd_spack(args, stdin):
             import spack.util.parallel as _spack_parallel
             if _is_pyodide():  # noqa: F821 — defined by shim_system.py exec
                 _spack_parallel.ENABLE_PARALLELISM = False
+                # Patch clingo's async solve mode.  In Pyodide, pthread_create is
+                # unavailable (no SharedArrayBuffer), so clingo.Control.solve(async_=True)
+                # raises "thread constructor failed" at the C level.  The async solve is
+                # used by spack/solver/asp.py to poll for KeyboardInterrupt; we replace
+                # it with a context-manager shim that runs the solve synchronously.
+                try:
+                    from spack.solver.core import clingo as _get_clingo  # noqa: F401
+                    _clingo_mod = _get_clingo()
+                    _clingo_real_solve = _clingo_mod.Control.solve
+
+                    class _SyncSolveHandle:
+                        """Sync stand-in for clingo.SolveHandle used when async_=True."""
+
+                        def __init__(self, ctrl, **kw):
+                            self._ctrl = ctrl
+                            self._kw = kw
+                            self._result = None
+
+                        def __enter__(self):
+                            kw = {k: v for k, v in self._kw.items() if k != "async_"}
+                            self._result = _clingo_real_solve(self._ctrl, **kw)
+                            return self
+
+                        def __exit__(self, *_):
+                            pass
+
+                        def wait(self, timeout=None):
+                            return True  # already done
+
+                        def cancel(self):
+                            pass
+
+                        def get(self):
+                            return self._result
+
+                    def _sync_clingo_solve(ctrl_self, *args, **kwargs):
+                        if kwargs.get("async_", False):
+                            return _SyncSolveHandle(ctrl_self, **kwargs)
+                        return _clingo_real_solve(ctrl_self, *args, **kwargs)
+
+                    _clingo_mod.Control.solve = _sync_clingo_solve
+                except Exception:
+                    pass
         except Exception:
             pass
         _orig_gc = _gc.get_threshold()

@@ -164,6 +164,42 @@ if os.environ.get("SPACK_LITE_SIMULATE_PYODIDE"):
 
     _sim_threading.Thread.start = _fail_thread_start
 
+    # (e) Patch clingo.Control.solve via importlib.import_module interception so
+    #     that any call with async_=True raises the thread-constructor error —
+    #     mimicking Pyodide's inability to spawn C-level threads (pthread_create →
+    #     EAGAIN).  spack.solver.core.clingo() loads the clingo package via
+    #     importlib.import_module (not via "import clingo"), so we wrap that
+    #     function rather than builtins.__import__ to reliably intercept the load.
+    #
+    #     Guard: only patch when the resolved module IS the external clingo package
+    #     (has Control attribute), not spack.bootstrap.clingo (a spack-internal
+    #     module that shares the bare name "clingo" in relative imports).
+    import importlib as _sim_importlib
+    _clingo_sim_patched = [False]
+    _real_importlib_import_module = _sim_importlib.import_module
+
+    def _clingo_patching_importlib(name, package=None):
+        result = _real_importlib_import_module(name, package)
+        if (
+            name == "clingo"
+            and not _clingo_sim_patched[0]
+            and hasattr(result, "Control")
+        ):
+            _clingo_sim_patched[0] = True
+            _real_control_solve = result.Control.solve
+
+            def _fail_async_clingo_solve(ctrl_self, *a, **kw):
+                if kw.get("async_", False):
+                    raise RuntimeError(
+                        "thread constructor failed: Resource temporarily unavailable"
+                    )
+                return _real_control_solve(ctrl_self, *a, **kw)
+
+            result.Control.solve = _fail_async_clingo_solve
+        return result
+
+    _sim_importlib.import_module = _clingo_patching_importlib
+
 # ---------------------------------------------------------------------------
 # Apply system shims
 # (monkey-patches subprocess, os, platform, grp, pwd, termios, tty, …)

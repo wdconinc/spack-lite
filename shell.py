@@ -550,17 +550,20 @@ def _spack_python_is_interactive(rest):
     return has_i or not has_code_or_script
 
 
-_ANSI_ESCAPE_RE = _re.compile(r'\x1b\[[0-9;]*m')
+# Match warning lines that contain only Spack's warning prefix and no message.
+# Components: optional ANSI color codes, "==> Warning:", optional ANSI reset,
+# optional trailing spaces, then end-of-line.
+_EMPTY_SPACK_WARNING_LINE_RE = _re.compile(
+    r'^(?:\x1b\[[0-9;]*m)*==>\s+Warning:(?:\x1b\[[0-9;]*m)*[ \t]*(?:\n|$)',
+    _re.MULTILINE,
+)
 
 
 def _suppress_empty_spack_warnings(text):
     """Drop blank ``==> Warning:`` lines from spack output."""
-    kept = []
-    for line in text.splitlines(keepends=True):
-        if _ANSI_ESCAPE_RE.sub('', line).strip() == '==> Warning:':
-            continue
-        kept.append(line)
-    return ''.join(kept)
+    if not text:
+        return text
+    return _EMPTY_SPACK_WARNING_LINE_RE.sub('', text)
 
 
 def _cmd_spack(args, stdin):

@@ -21,6 +21,7 @@ _spec = importlib.util.spec_from_file_location("_shell_funcs", _SHELL_PY)
 _shell_mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_shell_mod)
 _spack_python_is_interactive = _shell_mod._spack_python_is_interactive
+_suppress_empty_spack_warnings = _shell_mod._suppress_empty_spack_warnings
 
 
 class TestSpackPythonIsInteractive:
@@ -52,6 +53,31 @@ class TestSpackPythonIsInteractive:
     def test_double_dash_separator_not_interactive(self):
         # -- terminates flag processing; anything after is positional
         assert _spack_python_is_interactive(['--', 'script.py']) is False
+
+
+class TestSpackOutputNormalization:
+    """Unit tests for spack output cleanup helpers."""
+
+    def test_suppresses_plain_empty_warning_line(self):
+        text = "line 1\n==> Warning:   \nline 2\n"
+        assert _suppress_empty_spack_warnings(text) == "line 1\nline 2\n"
+
+    def test_suppresses_plain_empty_warning_line_at_edges(self):
+        assert _suppress_empty_spack_warnings("==> Warning:   \nline 1\n") == "line 1\n"
+        assert _suppress_empty_spack_warnings("line 1\n==> Warning:   \n") == "line 1\n"
+        assert _suppress_empty_spack_warnings("==> Warning:   \nline 1\n==> Warning:   \n") == "line 1\n"
+
+    def test_suppresses_ansi_colored_empty_warning_line(self):
+        text = "ok\n\x1b[0;33m==> Warning:\x1b[0m\nnext\n"
+        assert _suppress_empty_spack_warnings(text) == "ok\nnext\n"
+
+    def test_keeps_warning_with_message(self):
+        text = "==> Warning: something happened\n"
+        assert _suppress_empty_spack_warnings(text) == text
+
+    def test_keeps_ansi_colored_warning_with_message(self):
+        text = "\x1b[0;33m==> Warning:\x1b[0m actual message\n"
+        assert _suppress_empty_spack_warnings(text) == text
 
 
 class TestEcho:

@@ -47,9 +47,10 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict
 
-from sphinx.application import Sphinx
+if TYPE_CHECKING:
+    from sphinx.application import Sphinx
 
 from ._directives import (
     RunnableCodeBlock,

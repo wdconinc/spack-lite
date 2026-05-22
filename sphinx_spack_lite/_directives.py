@@ -11,7 +11,7 @@ layer (``spack_run.js``) scans for those attributes to inject "Run" buttons.
 The commands string is built by stripping the shell prompt prefix
 (lines starting with ``$``) from every line that begins with it;
 continuation lines (output, comments)
-are ignored.  The result is a newline-joined list of bare commands.
+are ignored.  The result is a JSON-encoded list of bare commands.
 """
 
 from __future__ import annotations
@@ -20,9 +20,6 @@ import html
 import json
 import re
 from typing import List
-
-from docutils import nodes
-from sphinx.directives.code import CodeBlock
 
 
 _PROMPT_RE = re.compile(r"^\$ ")
@@ -46,10 +43,29 @@ def _extract_commands(source: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Custom wrapper node
+# Sphinx-dependent classes (guarded so the module is importable without Sphinx)
 # ---------------------------------------------------------------------------
 
-class spack_run_container(nodes.General, nodes.Element):
+try:
+    from docutils import nodes as _nodes
+    from sphinx.directives.code import CodeBlock as _CodeBlock
+    _sphinx_available = True
+except ImportError:
+    _sphinx_available = False
+    _nodes = None  # type: ignore[assignment]
+    _CodeBlock = None  # type: ignore[assignment]
+
+
+# Determine base classes at runtime so the class definitions work whether or
+# not sphinx/docutils are installed.  When they are absent the stubs allow the
+# module to be imported (e.g., in test-only environments).
+_container_bases: tuple = (
+    (_nodes.General, _nodes.Element) if _sphinx_available else (object,)
+)
+_code_block_base: type = _CodeBlock if _sphinx_available else object
+
+
+class spack_run_container(*_container_bases):  # type: ignore[misc]
     """Wrapper node that carries spack-lite execution metadata as HTML data attrs."""
 
 
@@ -79,14 +95,13 @@ def _noop(self, node: spack_run_container) -> None:  # type: ignore[type-arg]
     """No-op visitor for non-HTML builders (LaTeX, text, …)."""
 
 
-# ---------------------------------------------------------------------------
-# Patched CodeBlock directive
-# ---------------------------------------------------------------------------
-
-class RunnableCodeBlock(CodeBlock):
+class RunnableCodeBlock(_code_block_base):  # type: ignore[misc, valid-type]
     """``code-block`` subclass that adds the ``:runnable:`` boolean option."""
 
-    option_spec = {**CodeBlock.option_spec, "runnable": lambda _: True}
+    option_spec = {
+        **(_code_block_base.option_spec if _sphinx_available else {}),
+        "runnable": lambda _: True,
+    }
 
     def run(self) -> list:  # type: ignore[override]
         result = super().run()

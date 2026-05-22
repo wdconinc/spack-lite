@@ -60,10 +60,29 @@
     #status-badge.packages-loading { background: #89b4fa; color: #1e1e2e; }
     #status-badge.error    { background: #f38ba8; color: #1e1e2e; }
 
+    #nav-links {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-left: auto;
+    }
+
+    #nav-links a {
+      font-size: 0.75rem;
+      color: #89b4fa;
+      text-decoration: none;
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      transition: background 0.15s;
+    }
+
+    #nav-links a:hover {
+      background: #313244;
+    }
+
     #version-label {
       font-size: 0.7rem;
       color: #585b70;
-      margin-left: auto;
       font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
     }
 
@@ -102,6 +121,10 @@
   <h1>⚗ Spack-Lite</h1>
   <span id="status-badge" class="loading">Loading Pyodide…</span>
   <button id="cancel-btn" title="Interrupt running command (Ctrl+C)">⛔ Cancel</button>
+  <nav id="nav-links">
+    <a href="docs/" title="Documentation">📖 Docs</a>
+    <a href="https://github.com/wdconinc/spack-lite" title="Source on GitHub" target="_blank" rel="noopener">GitHub</a>
+  </nav>
   <span id="version-label">__SPACK_LITE_VERSION__</span>
 </header>
 

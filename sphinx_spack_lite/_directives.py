@@ -6,10 +6,11 @@ Patches Sphinx's built-in ``code-block`` directive to recognise a
 ``:runnable:`` flag.  When set, the generated code block is wrapped in a
 ``spack_run_container`` node whose HTML visitor emits a ``<div>`` with
 ``data-spack-runnable`` and ``data-spack-commands`` attributes.  The JS
-layer (``spack_run.js``) scans for those attributes to inject "Run ▶" buttons.
+layer (``spack_run.js``) scans for those attributes to inject "Run" buttons.
 
-The commands string is built by stripping the ``$ `` prompt prefix from
-every line that begins with ``$ ``; continuation lines (output, comments)
+The commands string is built by stripping the shell prompt prefix
+(lines starting with ``$``) from every line that begins with it;
+continuation lines (output, comments)
 are ignored.  The result is a newline-joined list of bare commands.
 """
 
@@ -29,8 +30,8 @@ _PROMPT_RE = re.compile(r"^\$ ")
 def _extract_commands(source: str) -> str:
     """Return bare shell commands from a console block (prompts stripped).
 
-    Only lines beginning with ``$ `` are treated as command lines; all
-    other lines (output, blank lines, comments) are dropped.
+    Only lines beginning with a shell prompt (``$``) are treated as command
+    lines; all other lines (output, blank lines, comments) are dropped.
     """
     commands: List[str] = []
     for line in source.splitlines():

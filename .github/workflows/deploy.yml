@@ -62,6 +62,15 @@ jobs:
           SPACK_LITE_VERSION="$(git describe --tags --always --dirty)"
           sed -i "s|__SPACK_LITE_VERSION__|${SPACK_LITE_VERSION}|g" _site/index.html
 
+      - name: Install docs dependencies
+        run: pip install -e . -r docs/requirements.txt
+
+      - name: Build Sphinx documentation
+        env:
+          # Assets are served from the GitHub Pages root, one level above docs/.
+          SPACK_LITE_BASE_URL: https://wdconinc.github.io/spack-lite/
+        run: python3 -m sphinx -b html docs/ _site/docs/
+
       - name: Upload Pages artefact
         uses: actions/upload-pages-artifact@v5
         with:

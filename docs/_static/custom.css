@@ -1,0 +1,15 @@
+/* Minor overrides on top of Furo — keep the spack-lite dark feel */
+
+/* Slightly wider content on large screens */
+@media (min-width: 1200px) {
+  .wy-nav-content {
+    max-width: 860px;
+  }
+}
+
+/* Make inline code stand out a bit more */
+code.literal {
+  background: var(--color-inline-code-background);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+}

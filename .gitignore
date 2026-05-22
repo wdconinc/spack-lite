@@ -1,6 +1,7 @@
 # Build artefacts
 spack-lite.tar.gz
 /tmp/
+docs/_build/
 
 # Python
 __pycache__/

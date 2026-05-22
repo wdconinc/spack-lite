@@ -13,10 +13,6 @@ all blocks on this page.
    and the Spack archive download in the background.  Subsequent clicks are
    instant because the environment stays loaded for the whole page visit.
 
-.. contents:: On this page
-   :local:
-   :depth: 1
-
 Getting help
 ------------
 

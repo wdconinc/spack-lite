@@ -58,12 +58,39 @@ const _WORKER_BASE_URL = (function () {
 // ---------------------------------------------------------------------------
 let _commandStdoutCaptureChunks = null;
 
+// SharedWorker support: track all connected ports and the port that issued
+// the currently-running command so replies are routed correctly.
+const _ports = new Set();
+let _currentPort = null;
+// True once Pyodide has fully initialised and posted { state: 'ready' }.
+let _isReady = false;
+// Last status posted (replayed to new ports that connect after init).
+let _lastStatus = null;
+
 function post(type, payload) {
   if (type === 'stdout' && _commandStdoutCaptureChunks !== null) {
     _commandStdoutCaptureChunks.push(String(payload?.text ?? ''));
     return;
   }
-  self.postMessage({ type, ...payload });
+  const msg = { type, ...payload };
+  if (type === 'status') {
+    _lastStatus = msg;
+    if (_isReady === false && payload?.state === 'ready') _isReady = true;
+    // Broadcast status updates to all connected ports.
+    if (_ports.size > 0) {
+      _ports.forEach(p => p.postMessage(msg));
+    } else {
+      // Regular Worker mode — post directly to the owning page.
+      self.postMessage(msg);
+    }
+  } else {
+    // Route result / stdout / error to the page that sent the run command.
+    if (_currentPort) {
+      _currentPort.postMessage(msg);
+    } else {
+      self.postMessage(msg);
+    }
+  }
 }
 
 function setStatus(state, message) {
@@ -566,7 +593,12 @@ async function runShellCommand(cmdStr) {
 // ---------------------------------------------------------------------------
 // Message handler
 // ---------------------------------------------------------------------------
-self.onmessage = async ({ data }) => {
+// Message handler (shared between regular Worker and SharedWorker modes)
+// ---------------------------------------------------------------------------
+async function handleMessage(data, replyPort) {
+  // Track which port issued this message so replies are routed correctly.
+  _currentPort = replyPort;
+
   if (data.type === 'set-interrupt-buffer') {
     // Wired up by index.html after SharedArrayBuffer becomes available
     // (requires COOP/COEP headers, provided by coi-serviceworker).
@@ -617,6 +649,22 @@ self.onmessage = async ({ data }) => {
   } finally {
     _commandStdoutCaptureChunks = null;
   }
+}
+
+// Regular Worker mode: the owning page is the only client.
+self.onmessage = async ({ data }) => handleMessage(data, null);
+
+// SharedWorker mode: multiple pages (same origin) can share this worker.
+// Each connecting page gets its own MessagePort; status is broadcast to all
+// ports while stdout/result/error are routed to the page that sent the command.
+self.onconnect = function (e) {
+  const port = e.ports[0];
+  _ports.add(port);
+  port.start();
+  port.onmessage = async ({ data }) => handleMessage(data, port);
+  // Replay the last known status so the connecting page can update its UI
+  // without waiting for the next status transition (e.g. worker already ready).
+  if (_lastStatus) port.postMessage(_lastStatus);
 };
 
 // ---------------------------------------------------------------------------

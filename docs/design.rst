@@ -5,10 +5,6 @@ spack-lite runs the `Spack <https://spack.io>`_ package manager in a browser
 tab with zero server-side infrastructure.  This page describes how the pieces
 fit together.
 
-.. contents:: On this page
-   :local:
-   :depth: 2
-
 Overview
 --------
 

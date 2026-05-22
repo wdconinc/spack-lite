@@ -26,8 +26,18 @@
   // Worker state (shared across all blocks on the page)
   // ---------------------------------------------------------------------------
 
-  /** @type {Worker|null} */
+  /**
+   * The underlying Worker or SharedWorker object.
+   * @type {Worker|SharedWorker|null}
+   */
   let worker = null;
+  /**
+   * The MessagePort used to send/receive messages.
+   * For a regular Worker this is the worker itself; for a SharedWorker it is
+   * worker.port.
+   * @type {Worker|MessagePort|null}
+   */
+  let workerPort = null;
   /** True once the worker has posted { type: 'status', state: 'ready' } */
   let workerReady = false;
   /** Reject functions for pending initialisation waiters */
@@ -53,18 +63,39 @@
     if (worker) return;
 
     const workerUrl = config.workerUrl || '_static/worker.js';
-    worker = new Worker(workerUrl);
+
+    // Prefer SharedWorker so the Pyodide environment (installed packages, cwd,
+    // etc.) persists across page navigations within the same origin.  Fall back
+    // to a regular Worker when SharedWorker is unavailable (e.g. Firefox
+    // private-browsing mode).
+    if (typeof SharedWorker !== 'undefined') {
+      try {
+        worker = new SharedWorker(workerUrl);
+        workerPort = worker.port;
+        workerPort.start();
+        worker.onerror = handleWorkerError;
+      } catch (e) {
+        // SharedWorker construction failed — fall through to regular Worker.
+        worker = null;
+        workerPort = null;
+      }
+    }
+    if (!worker) {
+      worker = new Worker(workerUrl);
+      workerPort = worker;
+      worker.onerror = handleWorkerError;
+    }
 
     // Immediately send configure so the worker can override asset URLs before
     // it fetches spack-lite.tar.gz (which happens only after Pyodide + clingo
     // finish loading — several seconds into startup).
-    worker.postMessage({
+    workerPort.postMessage({
       type: 'configure',
       spackLiteUrl: config.spackLiteUrl || '_static/spack-lite.tar.gz',
       spackPackagesUrl: config.spackPackagesUrl || '_static/spack-packages.tar.gz',
     });
 
-    worker.onmessage = function ({ data }) {
+    workerPort.onmessage = function ({ data }) {
       switch (data.type) {
         case 'status':
           handleStatus(data.state, data.message);
@@ -80,26 +111,26 @@
           break;
       }
     };
+  }
 
-    worker.onerror = function (err) {
-      const msg = err.message || String(err);
-      workerReady = false;
-      readyRejecters.forEach(fn => fn(new Error(msg)));
-      readyRejecters = [];
-      readyResolvers = [];
-      // Reject any in-flight runCommandAsync promise so drainQueue() can unwind.
-      if (resultReject) {
-        resultReject(new Error(msg));
-        resultResolve = null;
-        resultReject = null;
-      }
-      if (activeOutputEl) {
-        appendOutput(activeOutputEl, '\n\x1b[31mWorker error: ' + msg + '\x1b[0m\n', true);
-        finaliseOutput(activeOutputEl);
-        activeOutputEl = null;
-      }
-      drainQueue(/*error=*/true);
-    };
+  function handleWorkerError(err) {
+    const msg = err.message || String(err);
+    workerReady = false;
+    readyRejecters.forEach(fn => fn(new Error(msg)));
+    readyRejecters = [];
+    readyResolvers = [];
+    // Reject any in-flight runCommandAsync promise so drainQueue() can unwind.
+    if (resultReject) {
+      resultReject(new Error(msg));
+      resultResolve = null;
+      resultReject = null;
+    }
+    if (activeOutputEl) {
+      appendOutput(activeOutputEl, '\n\x1b[31mWorker error: ' + msg + '\x1b[0m\n', true);
+      finaliseOutput(activeOutputEl);
+      activeOutputEl = null;
+    }
+    drainQueue(/*error=*/true);
   }
 
   function handleStatus(state, message) {
@@ -184,7 +215,7 @@
     return new Promise((resolve, reject) => {
       resultResolve = resolve;
       resultReject = reject;
-      worker.postMessage({ type: 'run', command });
+      workerPort.postMessage({ type: 'run', command });
     });
   }
 

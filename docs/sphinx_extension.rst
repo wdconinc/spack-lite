@@ -8,10 +8,6 @@ gain a **▶ Run** button that lazily initialises the spack-lite Web Worker and
 streams output inline — with zero impact on page-load time for readers who do
 not click.
 
-.. contents:: On this page
-   :local:
-   :depth: 2
-
 Installation
 ------------
 

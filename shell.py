@@ -699,6 +699,12 @@ def _cmd_spack(args, stdin):
         _orig_gc = _gc.get_threshold()
         try:
             _spack_main.main(args)
+        except SystemExit:
+            # spack.error.SpackError.die() calls sys.exit(1) on fatal errors
+            # (e.g. a command module fails to import because git is missing).
+            # Treat this as a non-fatal command failure — the error text has
+            # already been written to buf via stderr.
+            pass
         except KeyboardInterrupt:
             import traceback as _tb
             # Show where the code was interrupted so the user can see which

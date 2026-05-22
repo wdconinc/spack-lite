@@ -17,6 +17,7 @@ are ignored.  The result is a newline-joined list of bare commands.
 from __future__ import annotations
 
 import html
+import json
 import re
 from typing import List
 
@@ -28,16 +29,20 @@ _PROMPT_RE = re.compile(r"^\$ ")
 
 
 def _extract_commands(source: str) -> str:
-    """Return bare shell commands from a console block (prompts stripped).
+    """Return a JSON array of bare shell commands from a console block.
 
     Only lines beginning with a shell prompt (``$``) are treated as command
     lines; all other lines (output, blank lines, comments) are dropped.
+
+    The result is a JSON-encoded list so that it survives round-trip through
+    an HTML attribute value (HTML parsers normalise raw newlines in attributes
+    to spaces, which would corrupt a newline-joined string).
     """
     commands: List[str] = []
     for line in source.splitlines():
         if _PROMPT_RE.match(line):
             commands.append(_PROMPT_RE.sub("", line, count=1))
-    return "\n".join(commands)
+    return json.dumps(commands)
 
 
 # ---------------------------------------------------------------------------
@@ -52,8 +57,10 @@ def visit_spack_run_container_html(
     self,  # Sphinx HTMLTranslator
     node: spack_run_container,
 ) -> None:
-    commands = node.get("data-spack-commands", "")
-    escaped = html.escape(commands, quote=True)
+    # node["data-spack-commands"] is already a JSON string; escaping it for
+    # an HTML attribute is safe because json.dumps never emits bare `<`/`>`.
+    commands_json = node.get("data-spack-commands", "[]")
+    escaped = html.escape(commands_json, quote=True)
     self.body.append(
         f'<div class="spack-run-wrapper"'
         f' data-spack-runnable="true"'

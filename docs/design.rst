@@ -139,7 +139,7 @@ common specifications.  It is built by ``scripts/make_spack_lite.sh``:
 5. Pack as ``gztar``
 
 The companion ``spack-packages.tar.gz`` contains the full package repository
-(1 000 + packages) and is loaded lazily in the background after the REPL is
+(~8 000 packages) and is loaded lazily in the background after the REPL is
 already active, unlocking ``spack list`` / ``spack info`` for all packages.
 
 Package availability

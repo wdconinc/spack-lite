@@ -45,10 +45,10 @@ Notes
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Dict
 
-from docutils.parsers.rst import directives
 from sphinx.application import Sphinx
 
 from ._directives import (
@@ -89,26 +89,23 @@ def _html_page_context(
         return
 
     # Only inject assets on pages that actually contain runnable blocks.
-    if not doctree.traverse(spack_run_container):
+    if not list(doctree.findall(spack_run_container)):
         return
 
-    base_url = getattr(app.config, "spack_lite_base_url", "") or "_static/"
+    base_url = getattr(app.config, "spack_lite_base_url", "") or "https://wdconinc.github.io/spack-lite/"
     # Ensure trailing slash
     if not base_url.endswith("/"):
         base_url += "/"
 
-    worker_url = f"{base_url}worker.js"
-    spack_lite_url = f"{base_url}spack-lite.tar.gz"
-    spack_packages_url = f"{base_url}spack-packages.tar.gz"
-
-    # Inject an inline <script> that sets the config before spack_run.js loads.
+    config_obj = {
+        "workerUrl": f"{base_url}worker.js",
+        "spackLiteUrl": f"{base_url}spack-lite.tar.gz",
+        "spackPackagesUrl": f"{base_url}spack-packages.tar.gz",
+    }
+    # json.dumps produces a safe JS literal: no raw </script> or quote injection.
     config_script = (
         "<script>\n"
-        "window.SPACK_LITE_CONFIG = {\n"
-        f'  workerUrl: "{worker_url}",\n'
-        f'  spackLiteUrl: "{spack_lite_url}",\n'
-        f'  spackPackagesUrl: "{spack_packages_url}"\n'
-        "};\n"
+        f"window.SPACK_LITE_CONFIG = {json.dumps(config_obj)};\n"
         "</script>"
     )
 
@@ -126,8 +123,13 @@ def _html_page_context(
 
 def setup(app: Sphinx) -> Dict[str, Any]:
     # Config value: base URL for spack-lite assets.
-    # Empty string means "use _static/" (assets bundled into docs build).
-    app.add_config_value("spack_lite_base_url", default="", rebuild="html")
+    # Defaults to the canonical GitHub Pages deployment.  Override in conf.py
+    # to point at a GitHub Releases download URL or a self-hosted location.
+    app.add_config_value(
+        "spack_lite_base_url",
+        default="https://wdconinc.github.io/spack-lite/",
+        rebuild="html",
+    )
 
     # Register the custom node and its HTML visitors.
     app.add_node(

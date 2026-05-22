@@ -87,6 +87,12 @@
       readyRejecters.forEach(fn => fn(new Error(msg)));
       readyRejecters = [];
       readyResolvers = [];
+      // Reject any in-flight runCommandAsync promise so drainQueue() can unwind.
+      if (resultReject) {
+        resultReject(new Error(msg));
+        resultResolve = null;
+        resultReject = null;
+      }
       if (activeOutputEl) {
         appendOutput(activeOutputEl, '\n\x1b[31mWorker error: ' + msg + '\x1b[0m\n', true);
         finaliseOutput(activeOutputEl);
@@ -287,8 +293,14 @@
   function decorateBlocks() {
     const wrappers = document.querySelectorAll('[data-spack-runnable="true"]');
     wrappers.forEach(function (wrapper) {
-      const commands = wrapper.dataset.spackCommands || '';
-      if (!commands.trim()) return;
+      // Commands are stored as a JSON array to survive HTML attribute normalisation.
+      let commands;
+      try {
+        commands = JSON.parse(wrapper.dataset.spackCommands || '[]');
+      } catch (_) {
+        commands = [];
+      }
+      if (!commands.length) return;
 
       // --- Run button ---
       const btn = document.createElement('button');
@@ -338,7 +350,7 @@
         }
         outputEl.style.display = 'block';
         syncClear();
-        enqueueCommand(commands, outputEl, btn);
+        enqueueCommand(commands.join('\n'), outputEl, btn);
       });
     });
   }

@@ -32,13 +32,15 @@ const WASM_GIT_URL = 'https://cdn.jsdelivr.net/npm/wasm-git@0.0.14/lg2.js';
 
 // URL of the stripped-down Spack tarball (relative to the page origin).
 // Build it with  scripts/make_spack_lite.sh  and serve it alongside index.html.
-const SPACK_LITE_URL = 'spack-lite.tar.gz';
+// Can be overridden before init completes via a { type: 'configure' } message.
+let _spackLiteUrl = 'spack-lite.tar.gz';
 
 // URL of the full package archive loaded lazily in the browser background.
 // Built alongside spack-lite.tar.gz by scripts/make_spack_lite.sh.
 // When present, all Spack packages become available after the REPL is already
 // active.  When absent (local dev, demo) only the seed packages are available.
-const SPACK_PACKAGES_URL = 'spack-packages.tar.gz';
+// Can be overridden before init completes via a { type: 'configure' } message.
+let _spackPackagesUrl = 'spack-packages.tar.gz';
 
 // Base URL for resolving local assets (shim_system.py, shell.py, spack archive,
 // clingo wheel).  When running as an inlined Blob URL (local file:// testing),
@@ -218,7 +220,7 @@ function _copyTree(srcFS, srcPath, dstFS, dstPath) {
  */
 async function loadPackagesBackground() {
   try {
-    const url = new URL(SPACK_PACKAGES_URL, _WORKER_BASE_URL).href;
+    const url = new URL(_spackPackagesUrl, _WORKER_BASE_URL).href;
     // Initiate the fetch first (before changing the badge) so that the
     // 'ready' status message reaches the main thread before we send
     // 'packages-loading'.  This guarantees startREPL() fires before the
@@ -445,7 +447,7 @@ async function init() {
     // 5. Fetch and unpack spack-lite.tar.gz
     setStatus('loading', 'Fetching spack-lite archive…');
     try {
-      const response = await fetch(new URL(SPACK_LITE_URL, _WORKER_BASE_URL).href, { cache: 'no-cache' });
+      const response = await fetch(new URL(_spackLiteUrl, _WORKER_BASE_URL).href, { cache: 'no-cache' });
       if (response.ok) {
         const buffer = await response.arrayBuffer();
         setStatus('loading', 'Unpacking spack-lite…');
@@ -574,6 +576,15 @@ self.onmessage = async ({ data }) => {
     if (pyodide && data.buffer) {
       pyodide.setInterruptBuffer(data.buffer);
     }
+    return;
+  }
+  if (data.type === 'configure') {
+    // Override asset URLs before the init sequence fetches them.  This message
+    // must be sent by the host page immediately after creating the worker so it
+    // arrives before spack-lite.tar.gz is fetched (which happens only after
+    // Pyodide + clingo finish loading — several seconds into startup).
+    if (data.spackLiteUrl)     _spackLiteUrl     = data.spackLiteUrl;
+    if (data.spackPackagesUrl) _spackPackagesUrl = data.spackPackagesUrl;
     return;
   }
   if (data.type === 'load-packages') {

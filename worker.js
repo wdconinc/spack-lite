@@ -79,15 +79,19 @@ function post(type, payload) {
     // Broadcast status updates to all connected ports.
     if (_ports.size > 0) {
       _ports.forEach(p => p.postMessage(msg));
-    } else {
+    } else if (typeof self.postMessage === 'function') {
       // Regular Worker mode — post directly to the owning page.
+      // In SharedWorker mode self.postMessage does not exist; the status
+      // is stored in _lastStatus and replayed when a port connects.
       self.postMessage(msg);
     }
+    // else: SharedWorker with no ports connected yet — drop the in-flight
+    // status; it will be replayed via _lastStatus on the first onconnect.
   } else {
     // Route result / stdout / error to the page that sent the run command.
     if (_currentPort) {
       _currentPort.postMessage(msg);
-    } else {
+    } else if (typeof self.postMessage === 'function') {
       self.postMessage(msg);
     }
   }

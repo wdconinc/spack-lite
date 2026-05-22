@@ -1,3 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sphinx-spack-lite"
+version = "0.1.0"
+description = "Sphinx extension that adds interactive spack-lite Run buttons to code blocks"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "Apache-2.0 OR MIT" }
+classifiers = [
+    "Framework :: Sphinx :: Extension",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+    "sphinx>=5.0",
+    "docutils",
+]
+
+[project.entry-points."sphinx.extensions"]
+sphinx_spack_lite = "sphinx_spack_lite"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sphinx_spack_lite"]
+include = ["sphinx_spack_lite/static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests"]
+

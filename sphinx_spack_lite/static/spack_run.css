@@ -1,0 +1,120 @@
+/*
+ * spack_run.css — Styles for sphinx_spack_lite interactive code blocks
+ *
+ * Targets the Furo theme used by Spack's ReadTheDocs site.
+ * Gracefully degrades on other themes.
+ */
+
+/* ---------------------------------------------------------------------------
+   Wrapper emitted by spack_run_container node
+   --------------------------------------------------------------------------- */
+
+.spack-run-wrapper {
+  position: relative;
+}
+
+/* ---------------------------------------------------------------------------
+   Button row (Run ▶ + Clear)
+   --------------------------------------------------------------------------- */
+
+.spack-run-button-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+/* ---------------------------------------------------------------------------
+   Run ▶ button
+   Designed to blend with Furo's code block chrome.
+   --------------------------------------------------------------------------- */
+
+.spack-run-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.65rem;
+  border: 1px solid var(--color-brand-primary, #6750a4);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-brand-primary, #6750a4);
+  font-size: 0.8rem;
+  font-family: var(--font-stack--monospace, monospace);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  line-height: 1.4;
+}
+
+.spack-run-button:hover:not(:disabled) {
+  background: var(--color-brand-primary, #6750a4);
+  color: #fff;
+}
+
+.spack-run-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* "Loading…" / "Running…" state */
+.spack-run-button[data-state="loading"],
+.spack-run-button[data-state="running"] {
+  border-color: var(--color-announcement-background, #fab387);
+  color: var(--color-announcement-background, #d08060);
+}
+
+/* ---------------------------------------------------------------------------
+   Clear button
+   --------------------------------------------------------------------------- */
+
+.spack-run-clear {
+  background: none;
+  border: none;
+  color: var(--color-foreground-muted, #888);
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  font-family: inherit;
+}
+
+.spack-run-clear:hover {
+  color: var(--color-foreground-primary, #333);
+}
+
+/* ---------------------------------------------------------------------------
+   Output area
+   --------------------------------------------------------------------------- */
+
+.spack-run-output {
+  margin-top: 0.4rem;
+  padding: 0.6rem 0.8rem;
+  background: var(--color-code-background, #1e1e2e);
+  color: var(--color-code-foreground, #cdd6f4);
+  font-family: var(--font-stack--monospace, "Cascadia Code", "Fira Code", "Consolas", monospace);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  border-radius: 4px;
+  border: 1px solid var(--color-background-border, #313244);
+  white-space: pre-wrap;
+  overflow-y: auto;
+  max-height: 24rem;
+  /* Reset <pre> defaults */
+  margin-bottom: 0;
+}
+
+/* Error text inside output */
+.spack-run-output .spack-run-error {
+  color: #f38ba8;
+}
+
+/* ---------------------------------------------------------------------------
+   Shared status badge (fixed position, auto-hides when ready)
+   --------------------------------------------------------------------------- */
+
+.spack-run-status-badge {
+  transition: opacity 1s;
+}
+
+.spack-run-status-loading  { background: #fab387 !important; color: #1e1e2e !important; }
+.spack-run-status-ready    { background: #a6e3a1 !important; color: #1e1e2e !important; }
+.spack-run-status-error    { background: #f38ba8 !important; color: #1e1e2e !important; }

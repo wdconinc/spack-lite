@@ -142,7 +142,7 @@ jobs:
           sed -i "s|__SPACK_LITE_VERSION__|${SPACK_LITE_VERSION}|g" _site/index.html
 
       - name: Set up Node.js for browser smoke test
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
 
